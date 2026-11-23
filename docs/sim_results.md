@@ -2520,3 +2520,47 @@ door_oncoming、social、シード **4301–4340**(40 本)。この範囲は定�
 - 初版(d_trig U(4.5, 6.0)、接近の終了距離 0.25 m): P1、P4、P5 は合。P2 は social 12/20、baseline 2/20(否)。P3 は social 15/20、baseline 3/20(否)。対照は 0/20。
 - 調整 1 回(d_trig を U(7.5, 9.0)、接近の終了距離を 0.45 m に変更): P1、P4、P5 は合、対照は 0/20。P2 は social 16/20(合)、baseline 9/20(否)。P3 は social 20/20(合)、baseline 11/20(否)。
 - 中止の理由: 調整後も baseline の P2 と P3 が基準の 16/20 に届かなかった。baseline が落ちる理由は未確認。
+
+## door_yield: 測定規則の改訂(狭所点を静的障害物だけで判定。再測定の前)
+結果を見る前に固定する。上の「測定規則の固定」と、その結果(下記)は書き換えない。判定の基準・段の順序・閾値・M1a 上限・重みの既定値・door_yield のパラメータは変えない。S1 の再調整はしない。
+
+### 前回(HEAD fad6ff3)の測定結果と診断
+- A0、S2、S3、S5a は通過。**S4 は不合格**(baseline の 3 比較。M1 合計 324 → 551、M1a 271 → 298、未到達 0 → 2)。S4 以降(S5b、A5)は走らせていない。前回の出力は `build/door_yield/` に残し、消さない。
+- 診断(シード 1–20、baseline の 120 本、HEAD fad6ff3): 狭所点が出た 19679 周期は、壁が原因 0、人が原因 19679。発動 7498 周期もすべて人のコストが原因で、94.9% は狭所点を作った人自身がゲート条件を満たす。baseline 以外の 4 構成は既定 6 シナリオで狭所点 0 周期。狭所点を壁だけで決めると baseline の 120 行が `--accel-rollout` のみと全列一致する。
+- 結論の確度: シード 1–20 では高い。**シード 4361–4460 への適用は推測**(再実行していない。未到達 0 → 2 の原因は不明)。
+
+### 実装の変更(案 A)
+- `SamplingController::compute` に省略可能な引数 `static_obstacles`(人を含まない静的障害物のコスト)を足し、`door_yield` の狭所点の判定(`findNarrowPoint`)だけに使う。空なら従来どおり `obstacles` で判定する。sim は壁だけのコストを渡す。
+- `door_yield` が off のとき `static_obstacles` は参照しない。パラメータの値は変えない。ROS 側の呼び出しは変更していない(`door_yield` の配線は ROS にない。実機の costmap が静的層を分けて渡せるかは未確認で、有効化の前に確認する)。
+- 実装後の確認(シード 1–20 のみ): off は 5 構成 × 既定 6(600 行)と `INDOOR=1`(300 行)が fd79fca の出力と `git_sha`・`M12_mean_ms`・`M12_max_ms` を除いて差 0 行。on は既定 6 の 600 行が `--accel-rollout` のみと全行一致。baseline 以外の 4 構成は fad6ff3 の on と、既定 6・屋内とも一致(baseline の屋内は 60 行中 32 行が変わる。意図した変更)。
+
+### 再測定
+- **同じ基準、同じ段の順序**: A0 → S2 → S3 → S5a → S4 → S5b → A5。中止の条件、A1〜A5 の判定、使わない範囲(21–120、771–820、3701–3800、4101–4200、2121–2840、4301–4340、前回使った 4341–4660)は前の節のとおり。A3 は 5 構成すべてで判定し、baseline を免除しない。
+- シードだけ未使用の範囲へ +320 ずらす(前回の 4341–4660 は使わない)。
+
+| 段 | シード |
+|---|---|
+| A0 | 1–20(ずらさない) |
+| S2 | 4661–4680 |
+| S3 | 4681–4780(前半 50 本は 4681–4730) |
+| S5a | 4781–4830(S5b の前半 50 本と同じ範囲) |
+| S4 | 4681–4780(S3 と同じ範囲) |
+| S5b | 4781–4880 |
+| A5 | `--no-peds` の door_oncoming・side_door とも 4881–4980 |
+
+- 測定 HEAD は本規則のコミット。以後 `social_nav_core/` に差分が出たら測定は無効で、`git_dirty: no` が必須。off は fd79fca の worktree、on は測定 HEAD。同じ Docker イメージ ID(間で build しない)。
+- **出力先**: すべて `build/door_yield2/<段>/<腕>/`(リポジトリ相対。コンテナ内は `/ws/src/social_nav/build/door_yield2/<段>/<腕>/`)。腕・段で同じパスを使わず、入れ子にしない。`build/door_yield/`(前回)は消さない。off を走らせる worktree の出力は、判定後すぐ測定 HEAD の `build/door_yield2/` へ退避する。各段の `git_sha`、`git_dirty`、イメージ ID を結果の節に書く(直接実行の分は出力先に手で書き残す)。`run_sim_eval.sh` は毎回 `OUT_DIR` を `rm -rf` するので、再利用しない。
+
+### コマンド(`<off/on>` は `off`/`on`、`<腕>` は `none`(フラグなし)と `accel`(`SIM_EXTRA="--accel-rollout"`))
+- A0(8 本。off は fd79fca の worktree、on は測定 HEAD): 
+  - `OUT_DIR=build/door_yield2/a0/<off/on>_<腕>_six JUDGE_SEEDS=0 SELECT_START=1 SELECT_SEEDS=20 [SIM_EXTRA="--accel-rollout"] tools/run_sim_eval.sh`(600 行)
+  - `OUT_DIR=build/door_yield2/a0/<off/on>_<腕>_indoor INDOOR=1 JUDGE_SEEDS=0 SELECT_START=1 SELECT_SEEDS=20 [SIM_EXTRA="--accel-rollout"] tools/run_sim_eval.sh`(300 行)
+  - `git_sha`・`M12_mean_ms`・`M12_max_ms` を除いて全 1800 行一致。conditions.txt の `judge=none` を確認する。
+- S2: `social_nav_sim --scenario corridor_oncoming --controller social --seeds 20 --seed-start 4661 --ped-model {sfm2,ttc} [--accel-rollout --door-yield] --csv /ws/src/social_nav/build/door_yield2/s2/<sfm2/ttc>_<on/off>/out.csv`
+- S3: `social_nav_sim --scenario crowd --controller social --seeds 100 --seed-start 4681 [--accel-rollout --door-yield] --csv /ws/src/social_nav/build/door_yield2/s3/<on/off>/out.csv`(前半は `--seeds 50` で `.../s3/<on/off>_half/out.csv`)
+- S5a: `social_nav_sim --scenario door_oncoming --controller social --seeds 50 --seed-start 4781 [腕のフラグ] --csv /ws/src/social_nav/build/door_yield2/s5a/<腕>/out.csv`(腕は `none` / `accel`(`--accel-rollout`)/ `yield`(`--accel-rollout --door-yield`))
+- S4: `OUT_DIR=build/door_yield2/s4/<off/on> SELECT_START=4681 SELECT_SEEDS=100 JUDGE_SEEDS=0 TTC=1 [SIM_EXTRA="--accel-rollout --door-yield"] tools/run_sim_eval.sh`(off は fd79fca の worktree で `SIM_EXTRA` なし)。`ttc/` は `tools/ttc_check.py --before <off>/ttc --after <on>/ttc --range select --config social`。
+- S5b: `OUT_DIR=build/door_yield2/s5b/<腕> INDOOR=1 SELECT_START=4781 SELECT_SEEDS=100 JUDGE_SEEDS=0 [SIM_EXTRA=...] tools/run_sim_eval.sh`(3 腕 `none` / `accel` / `yield`。測定 HEAD)
+- A4 (iv): social・no_tactical(`--no-tactical`)・use_tracker(`--use-tracker`)の 3 構成 × 3 腕で `social_nav_sim --scenario indoor --seeds 100 --seed-start 4781 [構成のフラグ] [腕のフラグ] --wall-csv /ws/src/social_nav/build/door_yield2/a4iv/<構成>_<腕>/w.csv --csv /ws/src/social_nav/build/door_yield2/a4iv/<構成>_<腕>/out.csv`(`build/rel` の Release バイナリ)。S5b の出力と `M12_mean_ms`・`M12_max_ms` を除く全列が一致することを確認する(不一致は検査エラーで止める)。
+- A5: `social_nav_sim --scenario door_oncoming --no-peds --controller social --seeds 100 --seed-start 4881 --accel-rollout --door-yield --wall-csv /ws/src/social_nav/build/door_yield2/a5/door_oncoming/w.csv --csv /ws/src/social_nav/build/door_yield2/a5/door_oncoming/out.csv`(side_door は `scenario side_door`、`a5/side_door/`)
+- 実行は Docker の dev コンテナ(`social_nav-dev:jazzy`、`-DCMAKE_BUILD_TYPE=Release` の `build/rel`)の中で行う。S4 の crowd・social の行は S3 の同じ腕と、S5b の social door_oncoming は S5a の同じ腕と、`git_sha`・`M12_mean_ms`・`M12_max_ms` を除いて全行一致しなければならず、不一致は検査エラーとして測定を止める。
