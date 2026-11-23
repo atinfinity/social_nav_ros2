@@ -418,6 +418,77 @@ TEST(accel_rollout_first_step_lead_is_zero_at_v_max) {
   EXPECT_NEAR(x_on - x_off, 0.0, 1e-12);
 }
 
+// accel_rollout 累積差: 加速軌道の k 歩目(k = 0..N-1)の速度は A_k = min(v_max, c + acc_v (k+1) dt)、c = min(v_max, vx + acc_v dt)(窓の最大)。
+// 1 周期遅れて加速する軌道は D_0 = c、D_k = A_{k-1}。終点の差 = sum(A_k - D_k) dt = (A_{N-1} - c) dt。
+// 既定の horizon(3 s、N = 30)では A_{N-1} = v_max(vx が何であっても飽和する)なので、差 = (v_max - c) dt。vx = 0 で 0.07 m
+namespace {
+double maxQueriedXOver(double horizon, double vx0) {
+  ControllerParams prm;
+  prm.horizon = horizon;
+  prm.samples.v_samples = 2;
+  prm.samples.w_samples = 1;
+  prm.accel_rollout = true;
+  double max_x = -1e9;
+  const ObstacleCostFn rec = [&max_x](double x, double) { max_x = std::max(max_x, x); return 0.0; };
+  SamplingController c(prm, diff(), circle());
+  c.compute({0, 0, 0}, {vx0, 0, 0}, straightPath(0.0, 6.0), TrackedPeople{}, rec);
+  return max_x;
+}
+// 式から: 加速軌道の終点 x と、1 周期遅れの軌道の終点 x
+void expectedEnds(double horizon, double vx0, double* x_accel, double* x_delayed) {
+  const double vm = 0.8, acc = 1.0, dt = 0.1;
+  const int n = static_cast<int>(std::lround(horizon / dt));
+  const double c = std::min(vm, vx0 + acc * dt);
+  double xa = 0.0, xd = c * dt;
+  for (int k = 0; k < n; ++k) {
+    const double a_k = std::min(vm, c + acc * (k + 1) * dt);
+    xa += a_k * dt;
+    if (k < n - 1) xd += a_k * dt;
+  }
+  *x_accel = xa;
+  *x_delayed = xd;
+}
+}  // namespace
+
+TEST(accel_rollout_cumulative_gap_from_standstill) {
+  // vx = 0: c = 0.1。差 = (0.8 - 0.1) * 0.1 = 0.07 m
+  double xa, xd;
+  expectedEnds(3.0, 0.0, &xa, &xd);
+  EXPECT_NEAR(maxQueriedXOver(3.0, 0.0), xa, 1e-9);
+  EXPECT_NEAR(xa - xd, 0.07, 1e-9);
+}
+
+TEST(accel_rollout_cumulative_gap_at_intermediate_speeds) {
+  // vx = 0.4: c = 0.5、差 = 0.03 m。vx = 0.65: c = 0.75、差 = 0.005 m
+  for (const double vx : {0.4, 0.65}) {
+    double xa, xd;
+    expectedEnds(3.0, vx, &xa, &xd);
+    const double c = vx + 1.0 * 0.1;
+    EXPECT_NEAR(maxQueriedXOver(3.0, vx), xa, 1e-9);
+    EXPECT_NEAR(xa - xd, (0.8 - c) * 0.1, 1e-9);
+  }
+}
+
+TEST(accel_rollout_cumulative_gap_vanishes_when_c_reaches_v_max) {
+  // vx = 0.7(c = 0.8 ちょうど)と vx = 0.8(頭打ち): 加速軌道は全歩 0.8、差 0。終点 = 0.8 * 3 s
+  for (const double vx : {0.7, 0.8}) {
+    double xa, xd;
+    expectedEnds(3.0, vx, &xa, &xd);
+    EXPECT_NEAR(maxQueriedXOver(3.0, vx), 0.8 * 3.0, 1e-9);
+    EXPECT_NEAR(xa, 0.8 * 3.0, 1e-9);
+    EXPECT_NEAR(xa - xd, 0.0, 1e-9);
+  }
+}
+
+TEST(accel_rollout_cumulative_gap_before_saturation) {
+  // horizon 0.3 s(N = 3)、vx = 0: A = 0.2, 0.3, 0.4(v_max 未満)。差 = (A_2 - c) dt = 0.03 m
+  double xa, xd;
+  expectedEnds(0.3, 0.0, &xa, &xd);
+  EXPECT_NEAR(maxQueriedXOver(0.3, 0.0), xa, 1e-9);
+  EXPECT_NEAR(xa, (0.2 + 0.3 + 0.4) * 0.1, 1e-9);
+  EXPECT_NEAR(xa - xd, 0.03, 1e-9);
+}
+
 // 譲るときの 1 周: 新しい項と tie_min_turn が全部 off(明示)のとき、既定と同じ指令・コスト(人がいる閉ループを数周期)
 TEST(controller_83_flags_off_match_default) {
   ControllerParams off;
