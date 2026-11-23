@@ -22,8 +22,28 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+        with:
+          # 文書のみの判定で base...head の差分を取るため、履歴を全部取得する
+          fetch-depth: 0
+      # 文書だけの PR(変更ファイルがすべて docs/** か *.md)では重い処理を飛ばす。
+      # ジョブ自体は必ず動かす(チェック名を変えない)。push / schedule / workflow_dispatch は常に全部実行する。
+      - name: Detect docs-only PR
+        id: scope
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if [[ "$EVENT" == "pull_request" ]]; then
+            tools/ci_docs_only.sh "$BASE_SHA" "$HEAD_SHA" >> "$GITHUB_OUTPUT"
+          else
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+          fi
+          cat "$GITHUB_OUTPUT"
       - uses: docker/setup-buildx-action@v3
+        if: steps.scope.outputs.docs_only != 'true'
       - name: Build image
+        if: steps.scope.outputs.docs_only != 'true'
         uses: docker/build-push-action@v6
         with:
           context: docker
@@ -36,11 +56,13 @@ jobs:
           # fork からの PR は書き込み権限がないので書かない
           cache-to: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && 'type=gha,mode=max' || '' }}
       - name: Image id
+        if: steps.scope.outputs.docs_only != 'true'
         id: img
         run: |
           id=$(docker image inspect --format '{{.Id}}' social_nav-dev:jazzy | cut -d: -f2 | cut -c1-16)
           echo "id=$id" >> "$GITHUB_OUTPUT"
       - name: Restore ccache
+        if: steps.scope.outputs.docs_only != 'true'
         uses: actions/cache@v4
         with:
           path: .ccache
@@ -48,4 +70,5 @@ jobs:
           key: ccache-${{ steps.img.outputs.id }}-${{ github.sha }}
           restore-keys: ccache-${{ steps.img.outputs.id }}-
       - name: Run ci_local.sh
+        if: steps.scope.outputs.docs_only != 'true'
         run: ./ci_local.sh

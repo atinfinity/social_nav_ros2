@@ -31,7 +31,7 @@ echo "=== [1/3] core: cmake build + ctest ==="
 cmake -S "$SRC/social_nav_core" -B /ws/build/core -DCMAKE_COMPILE_WARNING_AS_ERROR=ON \
   "${CCACHE_ARGS[@]}"
 cmake --build /ws/build/core -j
-ctest --test-dir /ws/build/core --output-on-failure --no-tests=error
+ctest --test-dir /ws/build/core --output-on-failure --no-tests=error --parallel "$(nproc)"
 python3 "$SRC/tools/m4_select.py" --self-test
 python3 "$SRC/tools/pair_m1.py" --self-test
 python3 "$SRC/tools/branch49.py" --self-test
