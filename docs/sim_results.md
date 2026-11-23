@@ -1875,6 +1875,64 @@ social・no_tactical・use_tracker の door_oncoming の M1 合計は 185→287(
 ### 再現
 測定は上の 4 コマンド(シード 2741–2840)。配置の検査は `social_nav_sim --scenario blind_corner --seeds 20 --occlusion [--no-peds|--peds-ignore-robot] --blind-csv out.csv` と `test_sim_scenarios`。使用済みシード: 2741–2840(以後の選定・診断で再利用しない)。
 
+## door_yield: 測定規則の固定(測定の前)。開口部へ向かう人がいるとき停止線で止まる(`door_yield`、既定 off)
+
+結果を見る前に固定する規則。結果は別のコミットで書く。以後、定数・基準・シード・段の順序は変えない。判定用の 21–120 は使わない。
+
+### 目的と範囲
+- `accel_rollout` を on にすると人あり屋内で M1 が増える(上の節)。見立ては「開口部へ着く走行が増え、開口部の中で人と鉢合わせる」露出の増加。開口部の手前で待つ仕組みで、この増加を打ち消せるかを見る。
+- 既定は off のまま。A4 を満たしても既定 on にはしない。既定 on と実機での有効化は、人の情報の欠落の扱い(別課題)とユーザー判断の後。
+- 9 m は sim の視野(10 m)に頼った値で、実機で 9 m の人が見えるかは未確認。A4 を満たしても実機での効果は示せない。ずらしの単独効果は未分離。
+
+### 固定するパラメータ(HEAD 5ddf668 の既定値のまま)
+c_narrow 0.2 / lookahead 3.0 / r_gate 1.0 / range 9.0 / t_gate 5.0 / d_hold 2.5 / d_commit 0.6 / hold_max 8 / cooldown 10 / shift 0.5。
+- 動作: 経路上で前方 lookahead 以内の、障害物コストが c_narrow 以上の最初の点(狭所点)へ、追跡中の人(range 以内、confidence >= 0.3、経路方向でロボットより後方へ抜けていない)の等速予測が t_gate 以内に r_gate 以内まで入るとき、狭所点の手前 d_hold で止まれる速度を超える候補を捨てる。狭所点までが d_commit 未満なら何もしない。保持が hold_max を超えたら cooldown の間は再発動しない。
+- 横ずれ(shift): 保持中だけ、経路の全点を進行方向の右へ shift だけずらす。**w_path の参照点だけでなく目標点(ずらした経路の終点)も動く。**
+- on = `--accel-rollout --door-yield`、off = フラグなし。`--accel-rollout` のみの腕は記録のみ。
+
+### S1(調整用。規則の固定前に実施済み)
+door_oncoming、social、シード **4301–4340**(40 本)。この範囲は定数の調整に使った(判定には使わない。再利用しない)。腕は フラグなし / `--accel-rollout` / `--accel-rollout --door-yield`(定数の改訂ごとに 3 本目を取り直す)と、代替案(ずらし)の腕。
+結果(M1 合計 / 未到達): フラグなし 21/13、`--accel-rollout` 44/2、door_yield の不採用の改訂 0 は 38/0、改訂 1 は 32/0、代替案(ずらし)は 33/0、改訂 3 は 17/3。
+- 改訂 3(range 9.0、t_gate 5.0、shift 0.5 を含む現在の既定値)は S1 の目安(M1 合計 <= フラグなし、未到達 < フラグなし)を満たした唯一の版。改訂の上限 3 回と代替 1 回は使い切った。「ずらしなし」や 9 m だけを戻した版の追加測定はしない(4 回目の改訂にあたる)。
+- 21 → 17 は調整に使ったシードでの差で、証拠としては弱い。改訂 0・1・代替が 32–38、改訂 3 だけ 17 で、効いたのは早い検知(9 m、5 s)と読めるが、未確認。本当の判定は未使用のシードで 1 回だけ行う。
+
+### 段の順序とシード(1 段 1 回。再実行しない)
+順序: **S2 → S3 → S5a → S4 → S5b → A5**。どの段でも中止の条件を満たしたら次へ進まない。
+
+| 段 | 内容 | シード | 中止の条件 |
+|---|---|---|---|
+| A0 | 既定 off の一致(下) | 1–20 | 一致しなければ中止 |
+| S2 | corridor_oncoming、social、sfm2 と ttc、on と off | 4341–4360 | 未到達が on > off が 1 本でもあれば中止。M1 は記録のみ |
+| S3 | crowd、social、on と off | 4361–4460 | 前半 4361–4410 で M1 合計 on > off なら残りを走らせず中止。100 本で M1 合計・M1a・未到達のどれかが on > off なら中止 |
+| S5a | door_oncoming、social、3 腕 | 4461–4510 | M1 合計 on > off、または未到達 on >= off なら中止。合格とは言わず、打ち切りにしか使わない |
+| S4 | 既定 6 シナリオ × 5 構成、on と off、`TTC=1` | 4361–4460(S3 の social 分は再利用) | A3 のまま(下) |
+| S5b | 屋内 `INDOOR=1`、5 構成、3 腕、各 1 回 | 4461–4560(S5a の social door_oncoming は同じ値になる。決定的) | A4 のまま(下) |
+| A5 | `--no-peds` の door_oncoming・side_door | 4561–4660 | 下 |
+
+使わない: 21–120、771–820、3701–3800、4101–4200、2121–2740、2741–2840、調整に使った 4301–4340。
+
+### 合否基準
+- A0: 既定 off で、シード 1–20 × 5 構成 × 既定 6 シナリオ 600 行と `INDOOR=1` 200 行が main(fd79fca)と M12・git_sha を除き一致。`--accel-rollout` のみの出力も `door_yield` 追加前と一致。
+- A1(S2): corridor_oncoming、social、sfm2 と ttc、各 20 本。on の未到達が off より 1 本でも増えたら中止。
+- A2(S3): crowd、social、100 本。M1 合計 on <= off、M1a on <= off、未到達 on <= off。
+- A3(S4): 既定 6 シナリオ × 5 構成 100 本で M1 合計・M1a・未到達が off 以下。`TTC=1` で `tools/ttc_check.py` 終了 0(別 commit・別 OUT_DIR。git_sha の書き換えは禁止)。
+- A4(S5b): door_oncoming 人あり、social・no_tactical・use_tracker の合計で、(i) M1 合計が「フラグなし」以下、(ii) M1a が「フラグなし」以下、(iii) 未到達が「フラグなし」未満、(iv) 同じ 3 構成の合計で「壁距離 < 0.3 m の周期数」と `all_colliding` の周期数がともに on <= off。side_door は M1 合計が増えず未到達 0。baseline・ignore_robot は記録のみ。
+- A5: `--no-peds` の door_oncoming・side_door が M6 = 0、壁距離 < 0.3 m の周期 0、all_colliding の周期 0。
+- 屋内は記録のみのまま。A4・A5 は「課題 1 を完了と言えるか」の判定で、段の合否(中止の条件)には入れない(S5a の中止は上の表)。基準は結果を見たあとで変えない。比較対象は「M1 合計、フラグなし比」で固定する。「到達 1 本あたりの M1」や「`--accel-rollout` 比」での改善は成果に数えない。
+
+### 記録のみ
+到達 1 本あたりの M1、`--accel-rollout` のみの腕との比、M1b、発動周期数、保持上限(8 s)で切れた回数、baseline・ignore_robot、屋内の group_oncoming。ずらしの分離(`--door-shift 0` の腕)は判定に入れない。必要なら S5b の後に同じ 4461–4560 で記録のみとして足す(sim のフラグ追加が要る。結果で既定値は変えない)。
+
+### コマンド
+- S2: `social_nav_sim --scenario corridor_oncoming --controller social --seeds 20 --seed-start 4341 --ped-model {sfm2,ttc} [--accel-rollout --door-yield] --csv out.csv`
+- S3: `social_nav_sim --scenario crowd --controller social --seeds 100 --seed-start 4361 [--accel-rollout --door-yield] --csv out.csv`(前半は `--seeds 50`)
+- S5a: `social_nav_sim --scenario door_oncoming --controller social --seeds 50 --seed-start 4461 [腕のフラグ] --csv out.csv`
+- S4: `OUT_DIR=<別> SELECT_START=4361 SELECT_SEEDS=100 JUDGE_SEEDS=0 TTC=1 SIM_EXTRA="--accel-rollout --door-yield" tools/run_sim_eval.sh`(off は `SIM_EXTRA` なし)
+- S5b: `OUT_DIR=<別> INDOOR=1 SELECT_START=4461 SELECT_SEEDS=100 JUDGE_SEEDS=0 [SIM_EXTRA=...] tools/run_sim_eval.sh`(3 腕: フラグなし / `--accel-rollout` / `--accel-rollout --door-yield`)
+- A4 (iv) の測定: 既存の `--wall-csv`(明示指定時だけ別ファイルへ。列は scenario, seed, wall_cycles, all_colliding_cycles。人ありでも出る。既定の出力は変えない)で足りる。`run_sim_eval.sh` は構成ごとに同じファイルへ書くため使えないので、sim を直接、social・no_tactical(`--no-tactical`)・use_tracker(`--use-tracker`)の 3 構成 × 3 腕で `--scenario indoor --seeds 100 --seed-start 4461 --wall-csv <構成と腕ごとに別> --csv <別>` を走らせる。S5b と同じシード・同じ設定の決定的な再走で、M1 などの列が S5b と一致することを確認する(新しい測定ではない)。数えるのは door_oncoming の行。
+- A5: `social_nav_sim --scenario door_oncoming --no-peds --controller social --seeds 100 --seed-start 4561 --accel-rollout --door-yield --wall-csv w.csv --csv out.csv`(side_door も同様)
+- 実行は Docker の dev コンテナの中で、`build/` 以下の別ビルドで行う。
+
 ## 壁の角の二重計上: 規則の固定(測定の前)。壁の角を 2 回数えない修正の前後比較(side_door / blind_corner)
 修正の後、測定の前にこの規則を固定する。測定の結果を見てこの規則・閾値・修正は変えない。
 - **目的。** sfm2・ttc・legacy の壁の反発は線分ごとに最近点から押すので、2 本の線分が共有する角を 2 回数えていた(壁の角の二重計上の原因)。共有する角を 1 回だけ数えるようにした。開口部を持つ side_door と blind_corner は出力が変わるので、前後を測って記録する(記録のみ。判定には使わない)。

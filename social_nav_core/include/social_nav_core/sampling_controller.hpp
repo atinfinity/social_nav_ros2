@@ -29,13 +29,13 @@ struct ControllerParams { VelocityLimits limits; SampleSpec samples; double hori
   double door_c_narrow{0.2};     // 狭所とみなす障害物コスト
   double door_lookahead{3.0};    // 狭所点を探す経路の前方距離 [m]
   double door_r_gate{1.0};       // 狭所点からこの半径に人の予測位置が入ると発動 [m]
-  double door_range{9.0};        // 発動の対象にする人の距離の上限 [m](既定は social_ の max_range と同じ 6)
+  double door_range{9.0};        // 発動の対象にする人の距離の上限 [m](既定 9。social_ の max_range 6 より広い。sim の視野 10 m に頼った値で、実機で 9 m の人が見えるかは未確認)
   double door_t_gate{5.0};       // 人の等速予測の先読み [s]
   double door_d_hold{2.5};       // 停止線: 狭所点の手前 [m]
   double door_d_commit{0.6};     // 狭所点までの経路距離がこれ未満なら止まれないので何もしない [m]
   double door_hold_max{8.0};     // 保持の上限 [s]。超えたら door_cooldown の間は再発動しない
   double door_cooldown{10.0};    // [s]
-  double door_shift{0.5};        // 保持中だけ w_path・w_goal の参照経路を進行方向の右へずらす量 [m](0 = ずらさない)
+  double door_shift{0.5};        // 保持中だけ参照経路を進行方向の右へずらす量 [m](0 = ずらさない)。w_path だけでなく目標点(経路の終点 = goal)も同じ分だけ動く
 };
 
 // all_colliding のとき cmd は零指令、best_cost は 0
