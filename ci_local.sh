@@ -18,10 +18,18 @@ trap 'rc=$?; if [[ $rc -ne 0 ]]; then echo "CI FAILED at stage: $STAGE"; fi' EXI
 BASE_PATHS=("$SRC/social_nav_core")
 [[ -d "$SRC/ros2" ]] && BASE_PATHS+=("$SRC/ros2")
 
+# ccache の無い古いイメージでも動くよう、あるときだけ使う
+CCACHE_ARGS=()
+if command -v ccache >/dev/null; then
+  CCACHE_ARGS=(-DCMAKE_CXX_COMPILER_LAUNCHER=ccache)
+else
+  echo "ccache not found: building without it (rebuild the image to enable it)"
+fi
+
 STAGE=core
 echo "=== [1/3] core: cmake build + ctest ==="
 cmake -S "$SRC/social_nav_core" -B /ws/build/core -DCMAKE_COMPILE_WARNING_AS_ERROR=ON \
-  -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+  "${CCACHE_ARGS[@]}"
 cmake --build /ws/build/core -j
 ctest --test-dir /ws/build/core --output-on-failure --no-tests=error
 python3 "$SRC/tools/m4_select.py" --self-test
@@ -36,7 +44,7 @@ set +u
 source /opt/ros/jazzy/setup.bash
 set -u
 colcon build --base-paths "${BASE_PATHS[@]}" --cmake-args -DCMAKE_COMPILE_WARNING_AS_ERROR=ON \
-  -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+  "${CCACHE_ARGS[@]}"
 # social_nav_core のテストは [1/3] の ctest と同一集合（同じ CMakeLists）なので、ここでは重複して走らせない
 colcon test --base-paths "${BASE_PATHS[@]}" --packages-skip social_nav_core --return-code-on-test-failure
 colcon test-result --verbose
