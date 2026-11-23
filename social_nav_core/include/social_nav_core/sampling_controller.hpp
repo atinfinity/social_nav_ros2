@@ -58,7 +58,10 @@ class SamplingController {
   SamplingController(ControllerParams, std::shared_ptr<const MotionModel>, std::shared_ptr<const Footprint>);
   ControlResult compute(const Pose2D& pose, const Twist2D& vel, const std::vector<Pose2D>& path,
                         const TrackedPeople& people, const ObstacleCostFn& obstacles,
-                        double speed_limit_ratio = 1.0);
+                        double speed_limit_ratio = 1.0,
+                        const ObstacleCostFn& static_obstacles = ObstacleCostFn{});
+  // static_obstacles: door_yield の狭所点の判定だけに使う、人を含まない静的障害物のコスト。
+  // 空なら obstacles で判定する(従来と同じ)。door_yield が off のときは参照しない
   void setDiagnostics(bool on) { diag_ = on; }
 
  private:

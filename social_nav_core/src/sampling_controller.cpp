@@ -72,7 +72,8 @@ SamplingController::SamplingController(ControllerParams p, std::shared_ptr<const
 
 ControlResult SamplingController::compute(const Pose2D& pose, const Twist2D& vel,
                                           const std::vector<Pose2D>& path, const TrackedPeople& people,
-                                          const ObstacleCostFn& obstacles, double speed_limit_ratio) {
+                                          const ObstacleCostFn& obstacles, double speed_limit_ratio,
+                                          const ObstacleCostFn& static_obstacles) {
   ControlResult result;
   Vec2 narrow_pt{0, 0}, tangent_r{1, 0};
   const double ratio = std::min(1.0, std::max(0.0, speed_limit_ratio));
@@ -93,7 +94,7 @@ ControlResult SamplingController::compute(const Pose2D& pose, const Twist2D& vel
   double yield_vx_max = 0.0;
   std::vector<Pose2D> shifted;   // door_shift != 0 のとき、保持中だけ経路の参照点を右へずらしたもの
   if (p_.door_yield && !path.empty()) {
-    const double s_narrow = findNarrowPoint(pose, path, obstacles, p_.door_c_narrow, p_.door_lookahead, &narrow_pt, &tangent_r);
+    const double s_narrow = findNarrowPoint(pose, path, static_obstacles ? static_obstacles : obstacles, p_.door_c_narrow, p_.door_lookahead, &narrow_pt, &tangent_r);
     result.door_narrow_s = s_narrow;
     if (door_cool_ > 0.0) door_cool_ = std::max(0.0, door_cool_ - dt);
     bool cond = false;

@@ -355,6 +355,7 @@ RunMetrics runOne(const Options& o, const std::string& scenario, int seed, std::
   const bool baseline = o.controller == "baseline";
   TrackedPeople people;   // 毎周期更新。baseline の障害物コストが参照する
   const ObstacleCostFn obstacles = makeObstacleFn(sc.walls, baseline ? &people.agents : nullptr);
+  const ObstacleCostFn static_obstacles = makeObstacleFn(sc.walls, nullptr);   // door_yield の狭所点用(人を含まない)
 
   Pose2D pose = sc.start;
   Twist2D vel;
@@ -434,7 +435,7 @@ RunMetrics runOne(const Options& o, const std::string& scenario, int seed, std::
     rec.recordBehavior(dec.behavior, kControlDt);
 
     const auto t0 = std::chrono::steady_clock::now();
-    const ControlResult res = controller.compute(pose, vel, path, people, obstacles, dec.speed_ratio);
+    const ControlResult res = controller.compute(pose, vel, path, people, obstacles, dec.speed_ratio, static_obstacles);
     const auto t1 = std::chrono::steady_clock::now();
     rec.recordControlTime(std::chrono::duration<double, std::milli>(t1 - t0).count());
     const Twist2D cmd = res.all_colliding ? Twist2D{} : res.cmd;

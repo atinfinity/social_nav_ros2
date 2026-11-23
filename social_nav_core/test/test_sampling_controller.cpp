@@ -685,6 +685,24 @@ TEST(door_yield_default_is_off) {
   EXPECT_TRUE(!ControllerParams{}.door_yield);
 }
 
+TEST(door_yield_narrow_point_ignores_person_cost_but_finds_static_wall) {
+  const auto path = straightPath(0.0, 8.0);
+  // 人のコストだけが x = 4.9 以降にある障害物関数(人を含むコスト)と、壁なしの静的コスト
+  const ObstacleCostFn with_person = kDoorBand;
+  const ObstacleCostFn no_wall = [](double, double) { return 0.0; };
+  {
+    SamplingController c(doorOn(), diff(), circle());
+    const ControlResult r = c.compute({3.0, 0, 0}, {0.5, 0, 0}, path, staticPerson(5.0, 0.5), with_person, 1.0, no_wall);
+    EXPECT_TRUE(r.door_narrow_s < 0.0);
+    EXPECT_TRUE(!r.door_yield_active);
+  }
+  {
+    SamplingController c(doorOn(), diff(), circle());
+    const ControlResult r = c.compute({3.0, 0, 0}, {0.5, 0, 0}, path, staticPerson(5.0, 0.5), no_wall, 1.0, kDoorBand);
+    EXPECT_TRUE(r.door_narrow_s > 0.0);
+  }
+}
+
 TEST(door_yield_off_and_no_trigger_match_baseline_exactly) {
   const auto path = straightPath(0.0, 8.0);
   ControllerParams on = doorOn();
