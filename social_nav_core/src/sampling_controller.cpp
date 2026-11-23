@@ -26,6 +26,40 @@ double distToPath(double px, double py, const std::vector<Pose2D>& path) {
   return best;
 }
 
+// door_yield: 経路上でロボットの最近接点から前方 lookahead 以内に、障害物コストが c_narrow 以上になる最初の点を探す。
+// 返り値はその点までの経路距離(なければ -1)。tangent は最近接区間の向き(単位ベクトル)
+double findNarrowPoint(const Pose2D& pose, const std::vector<Pose2D>& path, const ObstacleCostFn& obstacles,
+                       double c_narrow, double lookahead, Vec2* point, Vec2* tangent) {
+  if (!obstacles || path.size() < 2) return -1.0;
+  std::size_t bi = 0;
+  double bd = std::numeric_limits<double>::max();
+  for (std::size_t i = 0; i + 1 < path.size(); ++i) {
+    const double d = distToSegment(pose.x, pose.y, path[i], path[i + 1]);
+    if (d < bd) { bd = d; bi = i; }
+  }
+  const double step = 0.05;
+  double walked = 0.0;   // 最近接点からの経路距離
+  bool first = true;
+  for (std::size_t i = bi; i + 1 < path.size() && walked <= lookahead; ++i) {
+    const double dx = path[i + 1].x - path[i].x, dy = path[i + 1].y - path[i].y;
+    const double len = std::hypot(dx, dy);
+    if (len < 1e-9) continue;
+    const double ux = dx / len, uy = dy / len;
+    if (first) { *tangent = {ux, uy}; }
+    double t0 = 0.0;
+    if (first) t0 = std::min(len, std::max(0.0, (pose.x - path[i].x) * ux + (pose.y - path[i].y) * uy));
+    first = false;
+    for (double t = t0; t <= len + 1e-9; t += step) {
+      const double s = walked + (t - t0);
+      if (s > lookahead) return -1.0;
+      const double x = path[i].x + ux * t, y = path[i].y + uy * t;
+      if (obstacles(x, y) >= c_narrow) { *point = {x, y}; return s; }
+    }
+    walked += len - t0;
+  }
+  return -1.0;
+}
+
 }  // namespace
 
 SamplingController::SamplingController(ControllerParams p, std::shared_ptr<const MotionModel> model,
@@ -40,6 +74,7 @@ ControlResult SamplingController::compute(const Pose2D& pose, const Twist2D& vel
                                           const std::vector<Pose2D>& path, const TrackedPeople& people,
                                           const ObstacleCostFn& obstacles, double speed_limit_ratio) {
   ControlResult result;
+  Vec2 narrow_pt{0, 0}, tangent_r{1, 0};
   const double ratio = std::min(1.0, std::max(0.0, speed_limit_ratio));
   const double dt = p_.dt;
   const std::size_t n_steps = static_cast<std::size_t>(std::max(1.0, std::round(p_.horizon / dt)));
@@ -53,11 +88,56 @@ ControlResult SamplingController::compute(const Pose2D& pose, const Twist2D& vel
   std::vector<Twist2D> cands;
   model_->sampleCommands(vel, lim, p_.samples, dt, cands);
 
+  // door_yield: 発動なら vx がこの値を超える候補を捨てる(減速候補は必ず残る)
+  bool yield_active = false;
+  double yield_vx_max = 0.0;
+  std::vector<Pose2D> shifted;   // door_shift != 0 のとき、保持中だけ経路の参照点を右へずらしたもの
+  if (p_.door_yield && !path.empty()) {
+    const double s_narrow = findNarrowPoint(pose, path, obstacles, p_.door_c_narrow, p_.door_lookahead, &narrow_pt, &tangent_r);
+    result.door_narrow_s = s_narrow;
+    if (door_cool_ > 0.0) door_cool_ = std::max(0.0, door_cool_ - dt);
+    bool cond = false;
+    if (s_narrow >= p_.door_d_commit && door_cool_ <= 0.0) {
+      for (const Agent& a : people.agents) {
+        if (a.confidence < p_.social.min_confidence) continue;
+        if (std::hypot(a.pos.x - pose.x, a.pos.y - pose.y) > p_.door_range) continue;
+        if ((a.pos.x - pose.x) * tangent_r.x + (a.pos.y - pose.y) * tangent_r.y < 0.0) continue;   // ロボットより後方へ抜けた人
+        for (double t = 0.0; t <= p_.door_t_gate + 1e-9; t += dt)
+          if (std::hypot(a.pos.x + a.vel.x * t - narrow_pt.x, a.pos.y + a.vel.y * t - narrow_pt.y) <= p_.door_r_gate) { cond = true; break; }
+        if (cond) break;
+      }
+    }
+    if (cond) {
+      door_hold_ += dt;
+      if (door_hold_ > p_.door_hold_max) { door_hold_ = 0.0; door_cool_ = p_.door_cooldown; cond = false; }
+    } else {
+      door_hold_ = 0.0;
+    }
+    if (cond) {
+      const double v_cap = std::sqrt(2.0 * p_.limits.acc_v * std::max(0.0, s_narrow - p_.door_d_hold));
+      yield_vx_max = std::max(v_cap, std::max(vel.vx - p_.limits.acc_v * dt, p_.limits.v_min)) + 1e-9;
+      yield_active = true;
+      result.door_yield_active = true;
+      if (p_.door_shift != 0.0 && path.size() >= 2) {
+        shifted = path;
+        for (std::size_t i = 0; i < path.size(); ++i) {
+          const std::size_t a = std::min(i, path.size() - 2);
+          const double ux = path[a + 1].x - path[a].x, uy = path[a + 1].y - path[a].y;
+          const double len = std::hypot(ux, uy);
+          if (len < 1e-9) continue;
+          shifted[i].x += p_.door_shift * uy / len;    // 進行方向の右側
+          shifted[i].y -= p_.door_shift * ux / len;
+        }
+      }
+    }
+  }
+
   social_.prepare(people, {pose.x, pose.y}, dt, dt, n_steps);
   const bool use_social = p_.w_social != 0.0 && !social_.empty();
 
+  const std::vector<Pose2D>& ref_path = shifted.empty() ? path : shifted;
   const bool has_path = !path.empty();
-  const Pose2D goal = has_path ? path.back() : pose;
+  const Pose2D goal = has_path ? ref_path.back() : pose;
   const double v_ref = std::max(p_.limits.v_max, 1e-6);
 
   // 譲るときの 1 周の案 H: 現在位置に最も近い経路区間の接線方向(1 周期に 1 回)。経路が 2 点未満、または長さ 0 の区間だけなら使わない
@@ -136,6 +216,7 @@ ControlResult SamplingController::compute(const Pose2D& pose, const Twist2D& vel
   };
 
   for (const Twist2D& c : cands) {
+    if (yield_active && c.vx > yield_vx_max) continue;
     Pose2D q = pose;
     bool collide = false;
     double obs_max = 0.0;
@@ -167,7 +248,7 @@ ControlResult SamplingController::compute(const Pose2D& pose, const Twist2D& vel
       double cost = p_.w_obstacle * om;
       if (has_path) {
         double sum = 0.0;
-        for (std::size_t k = 0; k < n_steps; ++k) sum += distToPath(xs[k], ys[k], path);
+        for (std::size_t k = 0; k < n_steps; ++k) sum += distToPath(xs[k], ys[k], ref_path);
         cost += p_.w_path * sum / static_cast<double>(n_steps);
         cost += p_.w_goal * std::hypot(qe.x - goal.x, qe.y - goal.y);
       }

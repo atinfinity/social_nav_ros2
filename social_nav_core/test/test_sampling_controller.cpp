@@ -667,4 +667,151 @@ TEST(controller_83_h_cost_difference_ignores_heading) {
   }
 }
 
+// door_yield: 狭所 = x >= 4.9 の帯(コスト 0.5)。狭所点は経路上の x = 4.9 以降の最初のサンプル
+const ObstacleCostFn kDoorBand = [](double x, double) { return (x >= 4.9 && x <= 5.1) ? 0.5 : 0.0; };
+
+// 計画の基本値(停止線 1.2 m、人は 6 m 以内・3 s 先読み、横ずらしなし)。既定値の調整とは独立に境界を固定する
+ControllerParams doorOn() {
+  ControllerParams p;
+  p.door_yield = true;
+  p.door_d_hold = 1.2;
+  p.door_range = 6.0;
+  p.door_t_gate = 3.0;
+  p.door_shift = 0.0;
+  return p;
+}
+
+TEST(door_yield_default_is_off) {
+  EXPECT_TRUE(!ControllerParams{}.door_yield);
+}
+
+TEST(door_yield_off_and_no_trigger_match_baseline_exactly) {
+  const auto path = straightPath(0.0, 8.0);
+  ControllerParams on = doorOn();
+  for (int mode = 0; mode < 3; ++mode) {
+    // mode 0: 人なし。1: 人が狭所点から遠い。2: 人は近いが door_yield off
+    ControllerParams prm = mode == 2 ? ControllerParams{} : on;
+    SamplingController c_on(prm, diff(), circle());
+    SamplingController c_ref(ControllerParams{}, diff(), circle());
+    const TrackedPeople ppl = mode == 0 ? TrackedPeople{} : staticPerson(5.0, mode == 1 ? 3.5 : 0.5);
+    Pose2D pa{0, 0, 0}, pb{0, 0, 0};
+    Twist2D va, vb;
+    for (int i = 0; i < 60; ++i) {
+      const ControlResult ra = c_on.compute(pa, va, path, ppl, kDoorBand);
+      const ControlResult rb = c_ref.compute(pb, vb, path, ppl, kDoorBand);
+      EXPECT_NEAR(ra.cmd.vx, rb.cmd.vx, 0.0);
+      EXPECT_NEAR(ra.cmd.wz, rb.cmd.wz, 0.0);
+      EXPECT_NEAR(ra.best_cost, rb.best_cost, 0.0);
+      EXPECT_TRUE(!ra.door_yield_active);
+      va = ra.cmd; vb = rb.cmd;
+      pa = DiffDriveModel().integrate(pa, va, 0.1);
+      pb = DiffDriveModel().integrate(pb, vb, 0.1);
+    }
+  }
+}
+
+TEST(door_yield_caps_speed_by_stopping_distance) {
+  const auto path = straightPath(0.0, 8.0);
+  ControllerParams on = doorOn();
+  const TrackedPeople ppl = staticPerson(5.0, 0.6);   // 狭所点から 1 m 以内
+  {
+    // s = 2.43 (x = 2.5 -> 4.93): v_cap = sqrt(2 (2.43 - 1.2)) = 1.57 > v_max。実質制限なし、発動はする
+    SamplingController c(on, diff(), circle());
+    const ControlResult r = c.compute({2.5, 0, 0}, {0.5, 0, 0}, path, ppl, kDoorBand);
+    EXPECT_TRUE(r.door_yield_active);
+    EXPECT_NEAR(r.door_narrow_s, 2.43, 0.06);
+  }
+  {
+    // s = 1.43: v_cap = sqrt(2 * 0.23) = 0.68。現在 0.8 から 0.1 の減速が下限なので上限は max(0.68, 0.7) = 0.7
+    SamplingController c(on, diff(), circle());
+    const ControlResult r = c.compute({3.5, 0, 0}, {0.8, 0, 0}, path, ppl, kDoorBand);
+    EXPECT_TRUE(r.door_yield_active);
+    EXPECT_TRUE(r.cmd.vx <= 0.7 + 1e-6);
+  }
+  {
+    // s ≈ d_hold(1.2): v_cap ≈ 0。現在 0.3 なら上限は 0.2 + 微小
+    SamplingController c(on, diff(), circle());
+    const ControlResult r = c.compute({3.73, 0, 0}, {0.3, 0, 0}, path, ppl, kDoorBand);
+    EXPECT_TRUE(r.door_yield_active);
+    EXPECT_TRUE(r.cmd.vx <= 0.2 + 0.05);
+    EXPECT_TRUE(!r.all_colliding);
+  }
+  {
+    // s < d_commit(0.6): 止まれないので何もしない(off と同じ)
+    SamplingController c(on, diff(), circle());
+    SamplingController ref(ControllerParams{}, diff(), circle());
+    const ControlResult r = c.compute({4.43, 0, 0}, {0.5, 0, 0}, path, ppl, kDoorBand);
+    const ControlResult q = ref.compute({4.43, 0, 0}, {0.5, 0, 0}, path, ppl, kDoorBand);
+    EXPECT_TRUE(!r.door_yield_active);
+    EXPECT_NEAR(r.cmd.vx, q.cmd.vx, 0.0);
+    EXPECT_NEAR(r.cmd.wz, q.cmd.wz, 0.0);
+    // s = 0.7(d_commit 以上): 発動
+    SamplingController c2(on, diff(), circle());
+    EXPECT_TRUE(c2.compute({4.23, 0, 0}, {0.5, 0, 0}, path, ppl, kDoorBand).door_yield_active);
+  }
+}
+
+TEST(door_yield_ignores_person_behind_robot) {
+  const auto path = straightPath(0.0, 8.0);
+  ControllerParams on = doorOn();
+  SamplingController c(on, diff(), circle());
+  // 人はロボット(x = 3.5)より後方(x = 3.0)。狭所点から 1 m 以内でもない場合の対照として、人を狭所点の手前側に置く
+  TrackedPeople ppl = staticPerson(3.4, 0.0);
+  ppl.agents[0].vel = {1.0, 0.0};   // 予測が狭所点の近くを通っても、ロボットより後方なら除く
+  EXPECT_TRUE(!c.compute({3.5, 0, 0}, {0.5, 0, 0}, path, ppl, kDoorBand).door_yield_active);
+}
+
+TEST(door_yield_hold_limit_then_no_retrigger_for_cooldown) {
+  const auto path = straightPath(0.0, 8.0);
+  ControllerParams on = doorOn();
+  SamplingController c(on, diff(), circle());
+  const TrackedPeople ppl = staticPerson(5.0, 0.6);
+  int first_active = 0, i = 0;
+  for (; i < 200; ++i) {   // 20 s。保持 8 s(80 周期。浮動小数の累積で ±1)で外れる
+    const bool a = c.compute({3.0, 0, 0}, {0, 0, 0}, path, ppl, kDoorBand).door_yield_active;
+    if (!a) break;
+    ++first_active;
+  }
+  EXPECT_TRUE(first_active >= 79 && first_active <= 81);
+  int silent = 0;
+  for (; i < 400; ++i) {
+    const bool a = c.compute({3.0, 0, 0}, {0, 0, 0}, path, ppl, kDoorBand).door_yield_active;
+    if (a) break;
+    ++silent;
+  }
+  EXPECT_TRUE(silent >= 99 && silent <= 101);   // 再発動禁止 10 s
+  EXPECT_TRUE(i < 400);                           // その後は再発動する
+}
+
+TEST(door_yield_shift_moves_reference_to_the_right_only_while_active) {
+  const auto path = straightPath(0.0, 8.0);
+  ControllerParams on = doorOn();
+  on.door_shift = 0.5;
+  const TrackedPeople ppl = staticPerson(5.0, 0.6);
+  SamplingController c(on, diff(), circle());
+  const ControlResult r = c.compute({2.5, 0, 0}, {0.5, 0, 0}, path, ppl, kDoorBand);
+  EXPECT_TRUE(r.door_yield_active);
+  EXPECT_TRUE(r.cmd.wz < 0.0);   // 右(-y)へ向かう
+  // 人が遠く発動しなければ shift は効かず off と同じ
+  SamplingController c2(on, diff(), circle());
+  SamplingController ref(ControllerParams{}, diff(), circle());
+  const TrackedPeople far = staticPerson(5.0, 3.5);
+  const ControlResult a = c2.compute({2.5, 0, 0}, {0.5, 0, 0}, path, far, kDoorBand);
+  const ControlResult b = ref.compute({2.5, 0, 0}, {0.5, 0, 0}, path, far, kDoorBand);
+  EXPECT_NEAR(a.cmd.vx, b.cmd.vx, 0.0);
+  EXPECT_NEAR(a.cmd.wz, b.cmd.wz, 0.0);
+}
+
+TEST(door_yield_always_leaves_a_decelerating_candidate) {
+  const auto path = straightPath(0.0, 8.0);
+  ControllerParams on = doorOn();
+  const TrackedPeople ppl = staticPerson(5.0, 0.6);
+  for (const double x : {2.0, 3.0, 3.73, 3.9, 4.2})
+    for (const double v : {0.0, 0.05, 0.3, 0.8, -0.1}) {
+      SamplingController c(on, diff(), circle());
+      const ControlResult r = c.compute({x, 0, 0}, {v, 0, 0}, path, ppl, kDoorBand);
+      EXPECT_TRUE(!r.all_colliding);
+    }
+}
+
 MINI_TEST_MAIN()
