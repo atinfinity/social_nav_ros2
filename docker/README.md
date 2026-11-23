@@ -25,3 +25,5 @@
 smoke を省略するには `CI_SKIP_SMOKE=1 ./ci_local.sh`。
 
 GitHub Actions（`.github/workflows/ci.yml`）もイメージを build して同じ `./ci_local.sh` を呼ぶだけなので、ローカルと同じ結果になる。
+
+ccache: `ci_local.sh` は C++ のコンパイルに ccache を使う。保存先はリポジトリ直下の `.ccache/`（git 管理外、上限 1 GB、無ければ自動作成）。CI ではこのディレクトリを `actions/cache` で保存・復元する。イメージのタグは `SOCIAL_NAV_IMAGE` で上書きできる。

@@ -2,7 +2,7 @@
 FROM ros:jazzy-ros-base
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      build-essential cmake git python3-colcon-common-extensions python3-rosdep \
+      build-essential ccache cmake git python3-colcon-common-extensions python3-rosdep \
       ros-jazzy-navigation2 ros-jazzy-nav2-bringup ros-jazzy-nav2-collision-monitor \
       ros-jazzy-behaviortree-cpp \
     && rm -rf /var/lib/apt/lists/*

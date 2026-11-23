@@ -5,6 +5,9 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+  schedule:
+    # 週 1 回、キャッシュなしでイメージを作り直し、apt の更新を取り込む
+    - cron: '17 3 * * 1'
 
 permissions:
   contents: read
@@ -19,7 +22,30 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
       - name: Build image
-        run: docker compose -f docker/compose.yaml build
+        uses: docker/build-push-action@v6
+        with:
+          context: docker
+          load: true
+          push: false
+          tags: social_nav-dev:jazzy
+          # schedule のときだけキャッシュを使わず、作り直したものでキャッシュを更新する
+          no-cache: ${{ github.event_name == 'schedule' }}
+          cache-from: type=gha
+          # fork からの PR は書き込み権限がないので書かない
+          cache-to: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && 'type=gha,mode=max' || '' }}
+      - name: Image id
+        id: img
+        run: |
+          id=$(docker image inspect --format '{{.Id}}' social_nav-dev:jazzy | cut -d: -f2 | cut -c1-16)
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+      - name: Restore ccache
+        uses: actions/cache@v4
+        with:
+          path: .ccache
+          # イメージ（コンパイラ）が変わるとキーが分かれる
+          key: ccache-${{ steps.img.outputs.id }}-${{ github.sha }}
+          restore-keys: ccache-${{ steps.img.outputs.id }}-
       - name: Run ci_local.sh
         run: ./ci_local.sh

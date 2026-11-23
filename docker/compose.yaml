@@ -1,11 +1,16 @@
 services:
   dev:
     build: .
-    image: social_nav-dev:jazzy
+    image: ${SOCIAL_NAV_IMAGE:-social_nav-dev:jazzy}
     volumes:
       - ..:/ws/src/social_nav
+      # ccache の保存先（無ければ作られる。CI ではここを actions/cache で保存・復元する）
+      - ../.ccache:/root/.ccache
     working_dir: /ws
     environment:
+      CCACHE_DIR: /root/.ccache
+      CCACHE_MAXSIZE: 1G
+      CCACHE_BASEDIR: /ws
       # 並行して動く他の dev コンテナと DDS が混ざらないよう、発見範囲をコンテナ内に閉じる
       ROS_AUTOMATIC_DISCOVERY_RANGE: LOCALHOST
     tty: true
