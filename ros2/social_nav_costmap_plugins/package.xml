@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>social_nav_costmap_plugins</name>
+  <version>0.1.0</version>
+  <description>Nav2 costmap layer drawing proxemic social costs around tracked people</description>
+  <maintainer email="dandelion1124@gmail.com">atinfinity</maintainer>
+  <license>Apache-2.0</license>
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <depend>rclcpp</depend>
+  <depend>nav2_costmap_2d</depend>
+  <depend>nav2_util</depend>
+  <depend>pluginlib</depend>
+  <depend>tf2</depend>
+  <depend>tf2_ros</depend>
+  <depend>social_nav_msgs</depend>
+  <depend>social_nav_core</depend>
+  <depend>social_nav_ros_common</depend>
+  <test_depend>ament_cmake_gtest</test_depend>
+  <export>
+    <build_type>ament_cmake</build_type>
+    <nav2_costmap_2d plugin="${prefix}/costmap_plugins.xml"/>
+  </export>
+</package>

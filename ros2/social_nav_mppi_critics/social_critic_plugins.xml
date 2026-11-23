@@ -1,0 +1,7 @@
+<class_libraries>
+  <library path="social_nav_mppi_critics">
+    <class type="mppi::critics::SocialCritic" base_class_type="mppi::critics::CriticFunction">
+      <description>MPPI critic adding social (proxemic and personal-space) costs around tracked people</description>
+    </class>
+  </library>
+</class_libraries>

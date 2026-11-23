@@ -1,0 +1,12 @@
+services:
+  dev:
+    build: .
+    image: social_nav-dev:jazzy
+    volumes:
+      - ..:/ws/src/social_nav
+    working_dir: /ws
+    environment:
+      # 並行して動く他の dev コンテナと DDS が混ざらないよう、発見範囲をコンテナ内に閉じる
+      ROS_AUTOMATIC_DISCOVERY_RANGE: LOCALHOST
+    tty: true
+    stdin_open: true

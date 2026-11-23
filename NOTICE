@@ -1,0 +1,13 @@
+social_nav
+Copyright 2026 atinfinity
+
+This product is licensed under the Apache License, Version 2.0. See LICENSE.
+
+This product includes code based on the RVO2 Library
+(https://github.com/snape/RVO2), in social_nav_core/sim/orca_ped_model.cpp:
+
+  Copyright 2008 University of North Carolina at Chapel Hill
+  Authors: Jur van den Berg, Stephen J. Guy, Jamie Snape, Ming C. Lin,
+  and Dinesh Manocha.
+  Licensed under the Apache License, Version 2.0.
+

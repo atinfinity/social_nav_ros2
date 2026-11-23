@@ -1,0 +1,36 @@
+<root BTCPP_format="4" main_tree_to_execute="MainTree">
+  <BehaviorTree ID="MainTree">
+    <RecoveryNode number_of_retries="6" name="NavigateRecovery">
+      <PipelineSequence name="NavigateWithSocial">
+        <!-- 戦略層: 1 Hz 再計画 -->
+        <RateController hz="1.0">
+          <RecoveryNode number_of_retries="1" name="ComputePath">
+            <ComputePathToPose goal="{goal}" path="{path}" planner_id="GridBased"/>
+            <ClearEntireCostmap name="ClearGlobal" service_name="global_costmap/clear_entirely_global_costmap"/>
+          </RecoveryNode>
+        </RateController>
+        <!-- 戦術層: ふるまい選択(判断はコア)。毎 tick 再評価 -->
+        <SelectSocialBehavior path="{path}" behavior="{behavior}"/>
+        <!-- 戦術→反応: YIELD/WAIT の間は FollowPath を halt -->
+        <ReactiveFallback name="HoldOrFollow">
+          <HoldPosition behavior="{behavior}"/>
+          <RecoveryNode number_of_retries="1" name="FollowPath">
+            <FollowPath path="{path}" controller_id="FollowPath"/>
+            <ClearEntireCostmap name="ClearLocal" service_name="local_costmap/clear_entirely_local_costmap"/>
+          </RecoveryNode>
+        </ReactiveFallback>
+      </PipelineSequence>
+      <ReactiveFallback name="RecoveryFallback">
+        <GoalUpdated/>
+        <RoundRobin name="RecoveryActions">
+          <Sequence name="ClearAll">
+            <ClearEntireCostmap name="ClearLocal2" service_name="local_costmap/clear_entirely_local_costmap"/>
+            <ClearEntireCostmap name="ClearGlobal2" service_name="global_costmap/clear_entirely_global_costmap"/>
+          </Sequence>
+          <Wait wait_duration="5.0"/>
+          <BackUp backup_dist="0.15" backup_speed="0.05"/>
+        </RoundRobin>
+      </ReactiveFallback>
+    </RecoveryNode>
+  </BehaviorTree>
+</root>

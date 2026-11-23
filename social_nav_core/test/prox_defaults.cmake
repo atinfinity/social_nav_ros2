@@ -1,0 +1,18 @@
+# usage: cmake -DSIM=<exe> -DOUT=<dir> -P prox_defaults.cmake
+# 既定値の明示(--prox-sigma 0.45 --rear-ratio 0.6)は無指定と同じ trace になり、値を変える(0.65 / 1.0)と変わることを確かめる。
+file(MAKE_DIRECTORY ${OUT})
+set(COMMON --scenario crowd --seeds 1 --seed-start 1 --sim-time 15)
+execute_process(COMMAND ${SIM} ${COMMON} --trace ${OUT}/t_none.txt RESULT_VARIABLE r1 OUTPUT_QUIET ERROR_QUIET)
+execute_process(COMMAND ${SIM} ${COMMON} --prox-sigma 0.45 --rear-ratio 0.6 --trace ${OUT}/t_default.txt RESULT_VARIABLE r2 OUTPUT_QUIET ERROR_QUIET)
+execute_process(COMMAND ${SIM} ${COMMON} --prox-sigma 0.65 --rear-ratio 1.0 --trace ${OUT}/t_changed.txt RESULT_VARIABLE r3 OUTPUT_QUIET ERROR_QUIET)
+if(NOT r1 EQUAL 0 OR NOT r2 EQUAL 0 OR NOT r3 EQUAL 0)
+  message(FATAL_ERROR "sim run failed: ${r1} ${r2} ${r3}")
+endif()
+execute_process(COMMAND ${CMAKE_COMMAND} -E compare_files ${OUT}/t_none.txt ${OUT}/t_default.txt RESULT_VARIABLE same)
+if(NOT same EQUAL 0)
+  message(FATAL_ERROR "explicit default values change the trace")
+endif()
+execute_process(COMMAND ${CMAKE_COMMAND} -E compare_files ${OUT}/t_none.txt ${OUT}/t_changed.txt RESULT_VARIABLE diff)
+if(diff EQUAL 0)
+  message(FATAL_ERROR "--prox-sigma / --rear-ratio had no effect")
+endif()

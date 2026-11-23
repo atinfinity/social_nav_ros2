@@ -1,0 +1,7 @@
+<class_libraries>
+  <library path="social_nav_controller">
+    <class type="social_nav_controller::SocialController" base_class_type="nav2_core::Controller">
+      <description>Social-aware sampling controller (wraps social_nav_core::SamplingController)</description>
+    </class>
+  </library>
+</class_libraries>
