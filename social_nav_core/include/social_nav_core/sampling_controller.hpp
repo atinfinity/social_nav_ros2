@@ -23,6 +23,19 @@ struct ControllerParams { VelocityLimits limits; SampleSpec samples; double hori
                           double w_turn{0.0};      // 譲るときの 1 周の案 A: 候補の |wz| への重み(既定 0 = 現行)
                           double w_heading{0.0};   // 譲るときの 1 周の案 C: 終点の向きと終点から目標への方位のずれ [rad] への重み(既定 0 = 現行)
                           bool accel_rollout{false};   // accel_rollout: 人が 6 m 以内にいない周期だけ、各 wz で vx 最大の候補を加速継続の軌道でも評価し、低い方のコストを採る(既定 off = 現行。人の情報の欠落も「人なし」と扱うので、実機では有効にしない)
+  // door_yield: 前方の狭所点(障害物コストが door_c_narrow 以上になる経路上の最初の点)へ人が向かってくるとき、
+  // 停止線(狭所点の手前 door_d_hold)で止まれる速度以下の候補だけを残す(既定 off = 現行。off のとき出力は 1 ビットも変わらない)
+  bool door_yield{false};
+  double door_c_narrow{0.2};     // 狭所とみなす障害物コスト
+  double door_lookahead{3.0};    // 狭所点を探す経路の前方距離 [m]
+  double door_r_gate{1.0};       // 狭所点からこの半径に人の予測位置が入ると発動 [m]
+  double door_range{9.0};        // 発動の対象にする人の距離の上限 [m](既定 9。social_ の max_range 6 より広い。sim の視野 10 m に頼った値で、実機で 9 m の人が見えるかは未確認)
+  double door_t_gate{5.0};       // 人の等速予測の先読み [s]
+  double door_d_hold{2.5};       // 停止線: 狭所点の手前 [m]
+  double door_d_commit{0.6};     // 狭所点までの経路距離がこれ未満なら止まれないので何もしない [m]
+  double door_hold_max{8.0};     // 保持の上限 [s]。超えたら door_cooldown の間は再発動しない
+  double door_cooldown{10.0};    // [s]
+  double door_shift{0.5};        // 保持中だけ参照経路を進行方向の右へずらす量 [m](0 = ずらさない)。w_path だけでなく目標点(経路の終点 = goal)も同じ分だけ動く
 };
 
 // all_colliding のとき cmd は零指令、best_cost は 0
@@ -35,14 +48,20 @@ struct ControlDiag {
   int chosen_contact{-1};   // 選ばれた候補に予測接触があったか(1/0)。選べなければ -1
 };
 
-struct ControlResult { Twist2D cmd; bool all_colliding{false}; double best_cost{0}; ControlDiag diag; };
+struct ControlResult { Twist2D cmd; bool all_colliding{false}; double best_cost{0}; ControlDiag diag;
+                       bool door_yield_active{false};   // door_yield が候補を絞った周期
+                       double door_narrow_s{-1.0};      // door_yield 有効時、狭所点までの経路距離 [m](なし = -1)
+};
 
 class SamplingController {
  public:
   SamplingController(ControllerParams, std::shared_ptr<const MotionModel>, std::shared_ptr<const Footprint>);
   ControlResult compute(const Pose2D& pose, const Twist2D& vel, const std::vector<Pose2D>& path,
                         const TrackedPeople& people, const ObstacleCostFn& obstacles,
-                        double speed_limit_ratio = 1.0);
+                        double speed_limit_ratio = 1.0,
+                        const ObstacleCostFn& static_obstacles = ObstacleCostFn{});
+  // static_obstacles: door_yield の狭所点の判定だけに使う、人を含まない静的障害物のコスト。
+  // 空なら obstacles で判定する(従来と同じ)。door_yield が off のときは参照しない
   void setDiagnostics(bool on) { diag_ = on; }
 
  private:
@@ -51,6 +70,7 @@ class SamplingController {
   std::shared_ptr<const Footprint> footprint_;
   SocialTrajectoryCost social_;
   bool diag_{false};
+  double door_hold_{0.0}, door_cool_{0.0};   // door_yield の保持時間と再発動禁止の残り [s]
 };
 
 }  // namespace social_nav

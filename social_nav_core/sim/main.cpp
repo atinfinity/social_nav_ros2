@@ -63,6 +63,7 @@ struct Options {
   bool diag_ped_vel_cmd{false};   // --diag-ped-robot-vel cmd(診断専用。既定 applied = 現行)
   bool tracker_q_set{false};        // --tracker-q が指定された(--use-tracker 時のみ有効)
   bool tracker_oracle_vel{false};   // --tracker-oracle-vel: 確定 track の速度だけ真値に差し替える(--use-tracker 時のみ)
+  bool door_yield{false};   // --door-yield: ControllerParams.door_yield(既定 off = 現行)
   bool accel_rollout{false};   // --accel-rollout / --no-accel-rollout: ControllerParams.accel_rollout(既定 off = 現行)
   bool tie_min_turn_stopped{false};   // --tie-min-turn-stopped: ControllerParams.tie_min_turn_stopped(譲るときの 1 周の案 T2。既定 off)
   bool tie_path_heading{false};   // --tie-path-heading: ControllerParams.tie_path_heading(譲るときの 1 周の案 H。既定 off)
@@ -96,7 +97,7 @@ void usage() {
       "                      (エレベーター・記録のみ: elevator_flow、elevator = その 1 本。all には含めない)\n"
       "                      (急に止まる・振り返る人・記録のみ: sudden_stop,sudden_turn,sudden_reverse、sudden = その 3 本。all には含めない)\n"
       "                      [--event-csv out.csv]\n"
-      "                      [--tracker-q A] [--tracker-oracle-vel] [--stop-aware] [--tie-min-turn] [--tie-min-turn-stopped] [--tie-path-heading] [--w-turn W] [--w-heading W] [--accel-rollout|--no-accel-rollout] [--csv out.csv] [--wall-csv out.csv] [--check] [--check-moving] [--check-moving-max N] [--seed-start K]\n"
+      "                      [--tracker-q A] [--tracker-oracle-vel] [--stop-aware] [--tie-min-turn] [--tie-min-turn-stopped] [--tie-path-heading] [--w-turn W] [--w-heading W] [--accel-rollout|--no-accel-rollout] [--door-yield] [--csv out.csv] [--wall-csv out.csv] [--check] [--check-moving] [--check-moving-max N] [--seed-start K]\n"
       "                      [--trace file]   (--seeds 1 と単一シナリオのときだけ)\n"
       "                      [--contacts-csv file]   (接触イベントの診断出力)\n"
       "  --check-moving-max N は上限 N。後ろに --check-moving を付けても上限は 0 に戻らない\n");
@@ -178,6 +179,7 @@ bool parseArgs(int argc, char** argv, Options& o) {
     else if (a == "--w-heading") { next(v); o.w_heading = std::atof(v.c_str()); }
     else if (a == "--accel-rollout") o.accel_rollout = true;
     else if (a == "--no-accel-rollout") o.accel_rollout = false;
+    else if (a == "--door-yield") o.door_yield = true;
     else if (a == "--check") o.check = true;
     else if (a == "--check-moving") { o.check = true; o.check_moving = true; }
     else if (a == "--check-moving-max") {
@@ -342,6 +344,7 @@ RunMetrics runOne(const Options& o, const std::string& scenario, int seed, std::
   cp.w_turn = o.w_turn;
   cp.w_heading = o.w_heading;
   cp.accel_rollout = o.accel_rollout;
+  cp.door_yield = o.door_yield;
   cp.social.prox.sigma = o.prox_sigma;
   cp.social.prox.rear_ratio = o.rear_ratio;
   SamplingController controller(cp, model, fp);
@@ -352,6 +355,7 @@ RunMetrics runOne(const Options& o, const std::string& scenario, int seed, std::
   const bool baseline = o.controller == "baseline";
   TrackedPeople people;   // 毎周期更新。baseline の障害物コストが参照する
   const ObstacleCostFn obstacles = makeObstacleFn(sc.walls, baseline ? &people.agents : nullptr);
+  const ObstacleCostFn static_obstacles = makeObstacleFn(sc.walls, nullptr);   // door_yield の狭所点用(人を含まない)
 
   Pose2D pose = sc.start;
   Twist2D vel;
@@ -431,7 +435,7 @@ RunMetrics runOne(const Options& o, const std::string& scenario, int seed, std::
     rec.recordBehavior(dec.behavior, kControlDt);
 
     const auto t0 = std::chrono::steady_clock::now();
-    const ControlResult res = controller.compute(pose, vel, path, people, obstacles, dec.speed_ratio);
+    const ControlResult res = controller.compute(pose, vel, path, people, obstacles, dec.speed_ratio, static_obstacles);
     const auto t1 = std::chrono::steady_clock::now();
     rec.recordControlTime(std::chrono::duration<double, std::milli>(t1 - t0).count());
     const Twist2D cmd = res.all_colliding ? Twist2D{} : res.cmd;
@@ -440,6 +444,7 @@ RunMetrics runOne(const Options& o, const std::string& scenario, int seed, std::
       if (res.all_colliding) ++wall->all_colliding_cycles;
     }
     rec.setControlContext(std::hypot(cmd.vx, cmd.vy), dec.speed_ratio, res.diag, cmd.vx);
+    if (trace.is_open() && o.door_yield) trace << "D " << t << ' ' << res.door_narrow_s << ' ' << (res.door_yield_active ? 1 : 0) << '\n';   // door_yield: 時刻 狭所点までの距離(なし -1) 発動
 
     for (int s = 0; s < substeps && !reached; ++s) {
       // 安全層。predictive(現行): 指令を適用すると外形間クリアランスが 0.15 m 未満かつ縮む場合は強制停止。
