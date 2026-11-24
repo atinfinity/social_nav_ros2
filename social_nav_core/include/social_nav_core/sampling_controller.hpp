@@ -23,6 +23,7 @@ struct ControllerParams { VelocityLimits limits; SampleSpec samples; double hori
                           double w_turn{0.0};      // 譲るときの 1 周の案 A: 候補の |wz| への重み(既定 0 = 現行)
                           double w_heading{0.0};   // 譲るときの 1 周の案 C: 終点の向きと終点から目標への方位のずれ [rad] への重み(既定 0 = 現行)
                           bool accel_rollout{false};   // accel_rollout: 人が 6 m 以内にいない周期だけ、各 wz で vx 最大の候補を加速継続の軌道でも評価し、低い方のコストを採る(既定 off = 現行。人の情報の欠落も「人なし」と扱うので、実機では有効にしない)
+                          double accel_clear_time{0.0};   // accel_rollout が on のとき、people_valid かつ人なしの周期が連続してこの秒数以上続いてから加速軌道を評価する(0 = 待たない = 従来の on)。off では参照しない
   // door_yield: 前方の狭所点(障害物コストが door_c_narrow 以上になる経路上の最初の点)へ人が向かってくるとき、
   // 停止線(狭所点の手前 door_d_hold)で止まれる速度以下の候補だけを残す(既定 off = 現行。off のとき出力は 1 ビットも変わらない)
   bool door_yield{false};
@@ -51,6 +52,7 @@ struct ControlDiag {
 struct ControlResult { Twist2D cmd; bool all_colliding{false}; double best_cost{0}; ControlDiag diag;
                        bool door_yield_active{false};   // door_yield が候補を絞った周期
                        double door_narrow_s{-1.0};      // door_yield 有効時、狭所点までの経路距離 [m](なし = -1)
+                       bool accel_used{false};          // 選ばれた候補が加速軌道のコストを採った周期
 };
 
 class SamplingController {
@@ -59,9 +61,11 @@ class SamplingController {
   ControlResult compute(const Pose2D& pose, const Twist2D& vel, const std::vector<Pose2D>& path,
                         const TrackedPeople& people, const ObstacleCostFn& obstacles,
                         double speed_limit_ratio = 1.0,
-                        const ObstacleCostFn& static_obstacles = ObstacleCostFn{});
+                        const ObstacleCostFn& static_obstacles = ObstacleCostFn{},
+                        bool people_valid = true);
   // static_obstacles: door_yield の狭所点の判定だけに使う、人を含まない静的障害物のコスト。
   // 空なら obstacles で判定する(従来と同じ)。door_yield が off のときは参照しない
+  // people_valid: 人の入力が健全か(受信済み、鮮度内、座標変換成功)。accel_rollout が on のときだけ参照する
   void setDiagnostics(bool on) { diag_ = on; }
 
  private:
@@ -70,7 +74,8 @@ class SamplingController {
   std::shared_ptr<const Footprint> footprint_;
   SocialTrajectoryCost social_;
   bool diag_{false};
-  double door_hold_{0.0}, door_cool_{0.0};   // door_yield の保持時間と再発動禁止の残り [s]
+  double door_hold_{0.0}, door_cool_{0.0};
+  double accel_clear_{0.0};                  // accel_rollout: people_valid かつ人なしが連続した時間 [s]   // door_yield の保持時間と再発動禁止の残り [s]
 };
 
 }  // namespace social_nav
