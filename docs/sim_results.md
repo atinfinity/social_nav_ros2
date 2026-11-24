@@ -2567,3 +2567,51 @@ door_oncoming、social、シード **4301–4340**(40 本)。この範囲は定�
 - **実行元(段ごと)**: fd79fca の worktree を使うのは **A0 と S4 の off だけ**。S2、S3、S5a、S5b、A4 (iv)、A5 は、off・`none`・`accel`・`yield`・on のすべてを測定 HEAD で走らせる(S3 の off と S5a の `none` は、フラグなしを測定 HEAD で走らせたもの)。したがって S3 と S4 の比較、S5a と S5b の一致検査(`git_sha` を除く)は、S4 の off 以外では同じコミットの出力どうしの比較になる。
 - **ビルドと出力先(直接実行の前)**: コンテナは `--rm` で、`/ws/build` はマウント外のため毎回消える。コンテナに入るたびに `cmake -S src/social_nav/social_nav_core -B build/rel -DCMAKE_BUILD_TYPE=Release && cmake --build build/rel -j --target social_nav_sim` を実行する(測定 HEAD と fd79fca の worktree で別々に。間で別イメージにしない)。直接実行の各コマンドは、上のとおり出力先を `mkdir -p` してから走らせる。`writeCsv` は書き込みの失敗を検査せず、出力先がなくても終了 0 になる。
 - **各段の実行後の検査**: 段(と腕)ごとに、期待する CSV(`out.csv`、`--wall-csv` を使う A4 (iv)・A5 は `w.csv` も)が存在し、行数(ヘッダを除く)が期待と合うことを確かめる。期待は S2 の各 CSV が 20 行、S3 が 100 行(前半 50 行)、S5a が 50 行、A5 の各 CSV が 100 行、A0 は six 600 行・indoor 300 行。A4 (iv) と S5b は `INDOOR=1` の出力なので、同じ構成・腕の既存出力(S5b の social door_oncoming)と行数を突き合わせる。欠けている、または行数が合わないときは検査エラーとして測定を止める。再実行はしない(出力先を作り直す再測定は、規則を書き直してから行う)。
+
+## door_yield の再測定: 結果(測定規則の改訂「狭所点を静的障害物だけで判定。再測定の前」に従う)
+- 測定 HEAD: 5bb45ec(git_dirty: no)。A0 と S4 の off だけ fd79fca の worktree(clean)。同じ Docker イメージ(social_nav-dev:jazzy、全段で同一、間で build なし)。出力は `build/door_yield2/<段>/<腕>/`(git 管理外)。
+- 数値は出力 CSV から集計し直した。M1 = M1 列の合計、M1a = `M1_moving` の合計(`M1a_fast` + `M1a_recent` の合計と全段で一致を確認)、未到達 = `reached` が 1 でない本数。
+- 全段(A0、S2、S3、S5a、S4、S5b、A4 (iv)、A5)を最後まで実行。中止・検査エラーなし。判定用 21–120 は使っていない。
+
+| 段 | シード | 基準 | 実測 | 合否 |
+|---|---|---|---|---|
+| A0 | 1–20 | off(fd79fca)と on(HEAD)の 8 本(six 600 行・indoor 300 行、none / accel 腕)が `git_sha`・`M12_mean_ms`・`M12_max_ms` 以外で全行一致 | 1800 行で差 0。conditions.txt は全 8 本 `judge=none` | 合格 |
+| S2 | 4661–4680 | corridor_oncoming social、sfm2・ttc とも on が off より悪化しない | sfm2: off、on とも M1 5 / M1a 5 / 未到達 0。ttc: 0 / 0 / 0 | 合格 |
+| S3 | 4681–4780 | crowd social 100 本(前半 50 本)、on が off より悪化しない | off、on とも 186 / 179 / 0。前半 50 本は 103 / 98 / 0(on、off 同じ) | 合格 |
+| S5a | 4781–4830 | door_oncoming social 50 本。yield の M1 ≤ none、未到達 yield < none | none 33 / 30 / 23、accel 56 / 42 / 3、yield 14 / 10 / 8 | 合格 |
+| S4 | 4681–4780 | 5 構成 × 6 シナリオ × 100 本(TTC=1)で on が off より悪化しない | 5 構成の M1 / M1a / 未到達は off、on とも同じ: social 220 / 213 / 1、baseline 338 / 242 / 1、no_tactical 178 / 176 / 0、use_tracker 186 / 180 / 0、ignore_robot 474 / 464 / 1(合計 1396 / 1275 / 3)。`ttc_check.py` は「悪化なし」 | 合格 |
+| S5b | 4781–4880 | A4 (i)〜(iii)(下) | 下 | 合格 |
+| A4 (iv) | 4781–4880 | 壁距離 < 0.3 m の周期と all_colliding の周期が yield ≤ none | 壁距離 < 0.3 m の周期は none、accel、yield とも 0。all_colliding の周期は none 996、accel 996、yield 0(social 構成の 996 は none と accel で同じ)。S5b の同構成・同腕と `M12_*` 以外で全列一致(9 本 × 300 行) | 合格 |
+| A5 | 4881–4980 | `--no-peds` の door_oncoming・side_door で M1 0、未到達 0、壁距離 < 0.3 m の周期 0、all_colliding の周期 0 | 両シナリオとも 100 行すべて 0 | 合格 |
+
+### S5b の A4 (i)〜(iii)(door_oncoming、social + no_tactical + use_tracker の 300 本)
+| 腕 | M1 | M1a | 未到達 |
+|---|---|---|---|
+| none | 144 | 132 | 124 |
+| accel | 323 | 259 | 19 |
+| yield | 88 | 39 | 35 |
+
+- (i) M1 yield 88 ≤ none 144、(ii) M1a yield 39 ≤ none 132、(iii) 未到達 yield 35 < none 124。すべて満たす。
+- 構成別の M1a_fast + M1a_recent は M1_moving と一致(上の表の M1a はどの行も両方の和と同じ)。
+- side_door(300 本): M1 は none、accel、yield とも 80、yield の未到達は 0。
+
+### 開口部の social 100 本(S5b、door_oncoming の social)
+| 腕 | M1 | M1a | 未到達 |
+|---|---|---|---|
+| none | 53 | 48 | 41 |
+| accel | 105 | 84 | 4 |
+| yield | 30 | 15 | 12 |
+
+- **yield の未到達 12 本は accel の 4 本より多い。** yield は none(41 本)より未到達が少なく M1 も減るが、accel と比べると到達できない本数は増える。M1 は accel の 105 から 30 に減った。
+- 記録のみ(door_oncoming、100 本): baseline は M1 が none 165 / accel 663 / yield 37、未到達 38 / 18 / 10。ignore_robot は M1 が 17 / 27 / 94、未到達 57 / 0 / 3(yield で M1 が増えている)。no_tactical は M1 44 / 94 / 30、未到達 41 / 7 / 13。use_tracker は M1 47 / 124 / 28、未到達 42 / 8 / 10。side_door の baseline(23)と ignore_robot(29)は全腕で同じ。
+
+### 手順の逸脱(事実)
+- S3 は規則どおり前半を先に判定して全体の実行を決める順にせず、前半(50 本)と全体(100 本)を、on・off の 4 本とも同時に走らせた。前半は on が off より悪化していなかったので結果は変わらない。
+- A5 の初回起動は、mac に `timeout` コマンドがなく何も走らずに失敗した(終了コード 127、出力なし)。同じコマンドで起動し直した。
+- A5 の M6 は CSV に列がなく、代わりに未到達(`reached` が 1 でない本数)を使った。
+
+### 結論と未確認のこと
+- 改訂した規則の基準は全段で満たした。ただし既定は **off のまま**(`--door-yield` は付けたときだけ働く)。
+- ROS にはまだ配線していない。sim は壁だけの静的コストを渡すが、ROS は combined costmap を渡すので、静的層だけを分けて渡せるかは未確認。
+- 実機の 9 m 先の可視性、横ずらしだけ(待つ動作なし)の効果は未確認。
+- yield の未到達は accel より多い(social 100 本で 12 本と 4 本)。この増加の原因は調べていない。
