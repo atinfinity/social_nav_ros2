@@ -74,8 +74,8 @@ class SamplingController {
   std::shared_ptr<const Footprint> footprint_;
   SocialTrajectoryCost social_;
   bool diag_{false};
-  double door_hold_{0.0}, door_cool_{0.0};
-  double accel_clear_{0.0};                  // accel_rollout: people_valid かつ人なしが連続した時間 [s]   // door_yield の保持時間と再発動禁止の残り [s]
+  double door_hold_{0.0}, door_cool_{0.0};   // door_yield の保持時間と再発動禁止の残り [s]
+  double accel_clear_{0.0};                  // accel_rollout: people_valid かつ人なしが連続した時間 [s]
 };
 
 }  // namespace social_nav
