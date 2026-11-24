@@ -22,7 +22,7 @@ struct ControllerParams { VelocityLimits limits; SampleSpec samples; double hori
                           bool tie_path_heading{false};  // 譲るときの 1 周の案 H: コストが同点(1e-9 以内)なら、終点の向きが現在位置に最も近い経路区間の接線に近い候補を選ぶ(経路 2 点未満、tie_min_turn* が on のときは無効。既定 off)
                           double w_turn{0.0};      // 譲るときの 1 周の案 A: 候補の |wz| への重み(既定 0 = 現行)
                           double w_heading{0.0};   // 譲るときの 1 周の案 C: 終点の向きと終点から目標への方位のずれ [rad] への重み(既定 0 = 現行)
-                          bool accel_rollout{false};   // accel_rollout: 人が 6 m 以内にいない周期だけ、各 wz で vx 最大の候補を加速継続の軌道でも評価し、低い方のコストを採る(既定 off = 現行。人の情報の欠落も「人なし」と扱うので、実機では有効にしない)
+                          bool accel_rollout{false};   // accel_rollout: 人が 6 m 以内にいない周期だけ、各 wz で vx 最大の候補を加速継続の軌道でも評価し、低い方のコストを採る(既定 off = 現行。accel_clear_time で人の入力の欠落と「人なし」を区別するが、これは実機で有効にする前提の 1 つを満たしただけで、開口部で人と出会う課題が残るので実機では有効にしない)
                           double accel_clear_time{0.0};   // accel_rollout が on のとき、people_valid かつ人なしの周期が連続してこの秒数以上続いてから加速軌道を評価する(0 = 待たない = 従来の on)。off では参照しない
   // door_yield: 前方の狭所点(障害物コストが door_c_narrow 以上になる経路上の最初の点)へ人が向かってくるとき、
   // 停止線(狭所点の手前 door_d_hold)で止まれる速度以下の候補だけを残す(既定 off = 現行。off のとき出力は 1 ビットも変わらない)

@@ -66,6 +66,16 @@ public:
     return freshPeople(latest_, now_sec, stale_timeout_, min_confidence_);
   }
 
+  // 受信済みかつ鮮度内(now - stamp <= stale_timeout)なら真。人が 0 人でも真になりうる(= 「人なし」を観測した)。
+  // min_confidence で落とした人は区別しない(それは core のタイマが受け持つ)
+  bool valid() const { return valid(clock_->now().seconds()); }
+
+  bool valid(double now_sec) const
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return received_ && !(now_sec - latest_.stamp > stale_timeout_);
+  }
+
 private:
   rclcpp::Clock::SharedPtr clock_;
   double stale_timeout_;

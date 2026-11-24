@@ -44,6 +44,12 @@ def test_plugins_declared():
     assert loc['social_layer']['enabled'] is False
 
 
+def test_default_yaml_keeps_accel_rollout_off():
+    ctrl = _params()['controller_server']['ros__parameters']['SocialDWA']
+    assert not ctrl.get('accel_rollout', False)
+    assert ctrl['accel_clear_time'] == 0.0
+
+
 def _launch_module():
     import importlib.util
     spec = importlib.util.spec_from_file_location(

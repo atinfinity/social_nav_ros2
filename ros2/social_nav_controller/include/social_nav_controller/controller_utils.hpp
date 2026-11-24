@@ -10,6 +10,20 @@
 
 namespace social_nav_controller {
 
+// accel_rollout の ROS 側の解決。真かつ accel_clear_time <= 0 なら偽にして disabled を真にする
+// (待ち時間なしの加速軌道は、人の入力の欠落を「人なし」と区別できないため)
+inline bool resolveAccelRollout(bool accel_rollout, double accel_clear_time, bool & disabled)
+{
+  disabled = accel_rollout && !(accel_clear_time > 0.0);
+  return accel_rollout && !disabled;
+}
+
+// core のタイマは 1 回の呼び出しを dt 秒と数える。制御周期(1/frequency)が dt とずれていれば真
+inline bool accelPeriodMismatch(double controller_frequency, double dt)
+{
+  return !(controller_frequency > 0.0) || std::abs(1.0 / controller_frequency - dt) > 1e-3;
+}
+
 // ロボット最近傍点より手前を刈り、そこから累積弧長 lookahead までを返す(最近傍点を含む)
 inline std::vector<social_nav::Pose2D> prunePath(const std::vector<social_nav::Pose2D> & path,
                                                  const social_nav::Pose2D & robot, double lookahead)
