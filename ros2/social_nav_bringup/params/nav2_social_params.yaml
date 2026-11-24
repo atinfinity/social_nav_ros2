@@ -210,6 +210,13 @@ controller_server:
       # 前提の 1 つを満たしただけで、開口部で人と出会う課題は残る。timer は 1 呼び出し = dt なので
       # controller_frequency = 1/dt のときだけ秒数が合う(合わなければ警告)
       accel_clear_time: 0.0
+      # door_yield(既定 false、実機では有効にしない): true なら map(door_map_topic)を購読し、地図の距離場から sim と同じ式で
+      # 静的障害物コストを作って狭所点の判定に使う(地図未受信・TF 失敗の間は狭所点なし = 発動しない)。
+      # 前提が残る: 地図に載らない開口部は検出できない、自己位置の誤差が直接効く、sim の証拠は accel_rollout と両方 on の組だけ
+      # (accel_rollout off なら起動時に警告)。door_* の閾値は core の既定のまま。タイマの秒数は accel_rollout と同じ規則(警告あり)
+      door_yield: false
+      # door_map_topic: map
+      # door_occupied_thresh: 65
 
 local_costmap:
   local_costmap:

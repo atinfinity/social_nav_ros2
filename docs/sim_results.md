@@ -2615,9 +2615,22 @@ door_oncoming、social、シード **4301–4340**(40 本)。この範囲は定�
 
 ### 結論と未確認のこと
 - 改訂した規則の基準は全段で満たした。ただし yield は M1 を減らす一方、停止中の接触(M1b)は増える。ただし既定は **off のまま**(`--door-yield` は付けたときだけ働く)。
-- ROS にはまだ配線していない。sim は壁だけの静的コストを渡すが、ROS は combined costmap を渡すので、静的層だけを分けて渡せるかは未確認。
+- ROS への配線は下の「door_yield の ROS への配線」(`SocialDWA` だけ、既定 off)。
 - 実機の 9 m 先の可視性、横ずらしだけ(待つ動作なし)の効果は未確認。
 - yield の未到達は accel より多い(social 100 本で 12 本と 4 本)。この増加の原因は調べていない。
+
+### door_yield の ROS への配線(`SocialController`、既定 off)
+- **方式。** `door_yield: true` のときだけ、`SocialController` が `map`(OccupancyGrid、transient_local)を自分で購読し、占有セル(`door_occupied_thresh` 以上、既定 65。unknown と地図の外は障害物でない)までの距離場(厳密な EDT)を作る。周期ごとに odom から map の TF を 1 回引き、経路上の点を map へ変換して距離場を引き、sim の `makeObstacleFn` と同じ式(`d < r + 0.05` → 1、それ以外 `0.9·exp(−(d − r − 0.05)/0.25)`、r = 0.3)でコストにして `static_obstacles`(第 7 引数)に渡す。式は ROS 側に同じ定数で複製し、単体テストで値(d = 0.34 → 1.0、0.35 → 0.9、0.726 → 0.2)と、幅 1.2 m の開口(中心のコスト 0.2 以上)、幅 2.0 m(0.2 未満)を固定した。`social_nav_core/` は変えていないので sim の再測定はしていない。
+- **Nav2 の膨張コストを使わなかった理由。** local costmap は `voxel_layer` + `inflation_layer` で、人が voxel 層に点群として入るので静的障害物だけを分けられない。Nav2 の膨張(`inflation_radius` 0.55、scaling 3.0)は 0.55 m で 0.47、その外は 0 で、sim の 0.2 の線(壁から 0.726 m)と意味が違う(0.2 の線が 0.55 m になる)。距離場から同じ式で作れば膨張パラメータに依存しない。
+- **地図未受信・TF 失敗。** 空の関数を渡すと core は `obstacles`(人を含む)に戻る(crowd で不合格になった版)ので、この間は常に 0 を返す関数を渡す(狭所点なし = 発動しない)。警告は throttle で出す。
+- **off のとき。** `door_yield: false`(既定)は購読も TF 参照も作らず、`compute` の第 7 引数は従来どおり空。smoke(`ci_local.sh`)で、既定では `controller_server` が `/map` を購読しないこと、`door_yield: true` では購読し、地図受信のログがちょうど 1 回出ることを確かめる。
+- **sim との一致の範囲。** 式と、格子の解像度(0.05 m)の誤差まで。壁が地図の占有セルとして正確に載る前提で、距離は占有セルの中心から測る(厚み 1 セルの壁で約 0.025 m の差)。発動の挙動(止まる、譲る)は ROS では測っていない(smoke は起動と購読だけ)。
+- **残る前提(実機では有効にしない)。**
+  - 地図に載らない開口部(開いた扉、什器)は検出されない。閉じた扉が地図で空いていれば誤検出する。自己位置の誤差が 0.726 m の線に直接効く。
+  - `door_range` 9 m の人が見えるか(人の追跡の到達距離、壁の裏の人は見えない)。
+  - sim の証拠は `--accel-rollout --door-yield` の組だけ。`door_yield` 単独、MPPI(既定の `FollowPath`)は未測定で、配線は `SocialDWA` だけ。`door_yield` が on で `accel_rollout` が off のときは起動時に警告する(無効化はしない)。
+  - 未到達が増えた原因(door_oncoming で 4 → 12)は未確認。
+  - `door_hold_max` / `door_cooldown` は呼び出し 1 回 = dt 秒で数える(`accel_clear_time` と同じ)。制御周期と dt がずれると秒数が合わないので警告する。このタイマと `reset()` で `door_hold_` / `door_cool_` が 0 に戻らない点は core の変更が要るので、issue 14 で扱う。
 
 ## accel_rollout の欠落ガード: 測定規則の固定(測定の前)。認識の欠落と「人なし」を区別する(`accel_clear_time`、既定 0)
 
