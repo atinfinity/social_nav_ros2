@@ -2585,22 +2585,25 @@ door_oncoming、social、シード **4301–4340**(40 本)。この範囲は定�
 | A5 | 4881–4980 | `--no-peds` の door_oncoming・side_door で M1 0、未到達 0、壁距離 < 0.3 m の周期 0、all_colliding の周期 0 | 両シナリオとも 100 行すべて 0 | 合格 |
 
 ### S5b の A4 (i)〜(iii)(door_oncoming、social + no_tactical + use_tracker の 300 本)
-| 腕 | M1 | M1a | 未到達 |
-|---|---|---|---|
-| none | 144 | 132 | 124 |
-| accel | 323 | 259 | 19 |
-| yield | 88 | 39 | 35 |
+| 腕 | M1 | M1a | M1b | 未到達 |
+|---|---|---|---|---|
+| none | 144 | 132 | 12 | 124 |
+| accel | 323 | 259 | 64 | 19 |
+| yield | 88 | 39 | 49 | 35 |
 
 - (i) M1 yield 88 ≤ none 144、(ii) M1a yield 39 ≤ none 132、(iii) 未到達 yield 35 < none 124。すべて満たす。
 - 構成別の M1a_fast + M1a_recent は M1_moving と一致(上の表の M1a はどの行も両方の和と同じ)。
+- M1b(`M1_stopped`、停止中の接触)は 3 構成合計で none 12 → yield 49 に増えた(accel は 64。social は 5 → 15、accel は 21)。M1 の減少(144 → 88、−56)は M1a の減少(132 → 39、−93)より小さく、**一部は M1a から M1b への移動である**。M1a から M1b への移動は改善に数えない。合否は規則どおり M1 合計で判定しており、上の判定は変わらない。
+- 到達 1 本あたりの M1(M1 ÷ 到達本数、3 構成合計): none 0.82、accel 1.15、yield 0.33。
+- 記録のみ(屋内 group_oncoming、3 構成 300 本): M1 47、M1a 43、未到達 37 で、none、accel、yield の 3 腕とも同じ。
 - side_door(300 本): M1 は none、accel、yield とも 80、yield の未到達は 0。
 
 ### 開口部の social 100 本(S5b、door_oncoming の social)
-| 腕 | M1 | M1a | 未到達 |
-|---|---|---|---|
-| none | 53 | 48 | 41 |
-| accel | 105 | 84 | 4 |
-| yield | 30 | 15 | 12 |
+| 腕 | M1 | M1a | M1b | 未到達 |
+|---|---|---|---|---|
+| none | 53 | 48 | 5 | 41 |
+| accel | 105 | 84 | 21 | 4 |
+| yield | 30 | 15 | 15 | 12 |
 
 - **yield の未到達 12 本は accel の 4 本より多い。** yield は none(41 本)より未到達が少なく M1 も減るが、accel と比べると到達できない本数は増える。M1 は accel の 105 から 30 に減った。
 - 記録のみ(door_oncoming、100 本): baseline は M1 が none 165 / accel 663 / yield 37、未到達 38 / 18 / 10。ignore_robot は M1 が 17 / 27 / 94、未到達 57 / 0 / 3(yield で M1 が増えている)。no_tactical は M1 44 / 94 / 30、未到達 41 / 7 / 13。use_tracker は M1 47 / 124 / 28、未到達 42 / 8 / 10。side_door の baseline(23)と ignore_robot(29)は全腕で同じ。
@@ -2611,7 +2614,7 @@ door_oncoming、social、シード **4301–4340**(40 本)。この範囲は定�
 - A5 の M6 は CSV に列がなく、代わりに未到達(`reached` が 1 でない本数)を使った。
 
 ### 結論と未確認のこと
-- 改訂した規則の基準は全段で満たした。ただし既定は **off のまま**(`--door-yield` は付けたときだけ働く)。
+- 改訂した規則の基準は全段で満たした。ただし yield は M1 を減らす一方、停止中の接触(M1b)は増える。ただし既定は **off のまま**(`--door-yield` は付けたときだけ働く)。
 - ROS にはまだ配線していない。sim は壁だけの静的コストを渡すが、ROS は combined costmap を渡すので、静的層だけを分けて渡せるかは未確認。
 - 実機の 9 m 先の可視性、横ずらしだけ(待つ動作なし)の効果は未確認。
 - yield の未到達は accel より多い(social 100 本で 12 本と 4 本)。この増加の原因は調べていない。
