@@ -65,6 +65,10 @@ struct Options {
   bool tracker_oracle_vel{false};   // --tracker-oracle-vel: 確定 track の速度だけ真値に差し替える(--use-tracker 時のみ)
   bool door_yield{false};   // --door-yield: ControllerParams.door_yield(既定 off = 現行)
   bool accel_rollout{false};   // --accel-rollout / --no-accel-rollout: ControllerParams.accel_rollout(既定 off = 現行)
+  double accel_clear_time{0.0};   // --accel-clear-time T: ControllerParams.accel_clear_time(既定 0 = 現行の on)
+  double gap_p{0.0}, gap_d{0.0};   // --people-gap P,D: 欠落の外の各周期に確率 P で開始、長さ D 秒(専用の乱数。P = 0 は注入なし)
+  bool gap_stale{false};           // --people-gap-stale: 欠落中は people_valid を偽にする
+  std::string accel_csv;           // --accel-csv: 加速軌道を採った周期数などを 1 走行 1 行で書く(明示時だけ。既定の CSV は変えない)
   bool tie_min_turn_stopped{false};   // --tie-min-turn-stopped: ControllerParams.tie_min_turn_stopped(譲るときの 1 周の案 T2。既定 off)
   bool tie_path_heading{false};   // --tie-path-heading: ControllerParams.tie_path_heading(譲るときの 1 周の案 H。既定 off)
   bool tie_min_turn{false};   // --tie-min-turn: ControllerParams.tie_min_turn(譲るときの 1 周の案 T。既定 off = 現行)
@@ -97,7 +101,7 @@ void usage() {
       "                      (エレベーター・記録のみ: elevator_flow、elevator = その 1 本。all には含めない)\n"
       "                      (急に止まる・振り返る人・記録のみ: sudden_stop,sudden_turn,sudden_reverse、sudden = その 3 本。all には含めない)\n"
       "                      [--event-csv out.csv]\n"
-      "                      [--tracker-q A] [--tracker-oracle-vel] [--stop-aware] [--tie-min-turn] [--tie-min-turn-stopped] [--tie-path-heading] [--w-turn W] [--w-heading W] [--accel-rollout|--no-accel-rollout] [--door-yield] [--csv out.csv] [--wall-csv out.csv] [--check] [--check-moving] [--check-moving-max N] [--seed-start K]\n"
+      "                      [--tracker-q A] [--tracker-oracle-vel] [--stop-aware] [--tie-min-turn] [--tie-min-turn-stopped] [--tie-path-heading] [--w-turn W] [--w-heading W] [--accel-rollout|--no-accel-rollout] [--accel-clear-time T] [--people-gap P,D] [--people-gap-stale] [--accel-csv out.csv] [--door-yield] [--csv out.csv] [--wall-csv out.csv] [--check] [--check-moving] [--check-moving-max N] [--seed-start K]\n"
       "                      [--trace file]   (--seeds 1 と単一シナリオのときだけ)\n"
       "                      [--contacts-csv file]   (接触イベントの診断出力)\n"
       "  --check-moving-max N は上限 N。後ろに --check-moving を付けても上限は 0 に戻らない\n");
@@ -179,6 +183,24 @@ bool parseArgs(int argc, char** argv, Options& o) {
     else if (a == "--w-heading") { next(v); o.w_heading = std::atof(v.c_str()); }
     else if (a == "--accel-rollout") o.accel_rollout = true;
     else if (a == "--no-accel-rollout") o.accel_rollout = false;
+    else if (a == "--accel-clear-time") {
+      next(v);
+      std::size_t pos = 0;
+      o.accel_clear_time = std::stod(v, &pos);
+      if (pos != v.size() || !(o.accel_clear_time >= 0.0)) throw std::invalid_argument("--accel-clear-time must be a number >= 0: " + v);
+    }
+    else if (a == "--people-gap") {
+      next(v);
+      const std::size_t comma = v.find(',');
+      if (comma == std::string::npos) throw std::invalid_argument("--people-gap must be P,D: " + v);
+      std::size_t p1 = 0, p2 = 0;
+      const std::string sp = v.substr(0, comma), sd = v.substr(comma + 1);
+      o.gap_p = std::stod(sp, &p1);
+      o.gap_d = std::stod(sd, &p2);
+      if (p1 != sp.size() || p2 != sd.size() || !(o.gap_p >= 0.0 && o.gap_p <= 1.0) || !(o.gap_d > 0.0)) throw std::invalid_argument("--people-gap must be P,D with 0 <= P <= 1 and D > 0: " + v);
+    }
+    else if (a == "--people-gap-stale") o.gap_stale = true;
+    else if (a == "--accel-csv") next(o.accel_csv);
     else if (a == "--door-yield") o.door_yield = true;
     else if (a == "--check") o.check = true;
     else if (a == "--check-moving") { o.check = true; o.check_moving = true; }
@@ -202,6 +224,8 @@ bool parseArgs(int argc, char** argv, Options& o) {
   if (o.seeds < 1) throw std::invalid_argument("--seeds must be >= 1");
   if (o.controller != "social" && o.controller != "baseline")
     throw std::invalid_argument("--controller must be social or baseline");
+  if (o.gap_stale && !(o.gap_p > 0.0))
+    throw std::invalid_argument("--people-gap-stale requires --people-gap");
   if (o.tracker_q_set && !o.use_tracker)
     throw std::invalid_argument("--tracker-q requires --use-tracker");
   if (o.tracker_oracle_vel && !o.use_tracker)
@@ -256,6 +280,9 @@ ObstacleCostFn makeObstacleFn(const std::vector<Segment>& walls, const std::vect
 
 struct WallStats { int wall_cycles{0}, all_colliding_cycles{0}; };
 
+// --accel-csv の 1 走行分。誤加速 = accel_used が真で、真値の人が 6 m 以内かつ見通し線がある周期
+struct AccelStats { int accel_cycles{0}, false_accel_cycles{0}, gap_cycles{0}, gap_accel_cycles{0}; };
+
 // --blind-csv の 1 走行分(壁の遮蔽)。時刻は -1 = 該当なし。時刻の規則は docs/sim_results.md の「壁による遮蔽」節
 struct BlindStats {
   bool has_ped{false};
@@ -275,9 +302,11 @@ struct EventStats {
   double min_clear{1e9}, t_min_clear{-1};
 };
 
-RunMetrics runOne(const Options& o, const std::string& scenario, int seed, std::vector<ContactEvent>* contacts, WallStats* wall = nullptr, BlindStats* blind = nullptr, EventStats* event = nullptr) {
+RunMetrics runOne(const Options& o, const std::string& scenario, int seed, std::vector<ContactEvent>* contacts, WallStats* wall = nullptr, BlindStats* blind = nullptr, EventStats* event = nullptr, AccelStats* accel = nullptr) {
   std::mt19937 rng(static_cast<unsigned>(seed));
   std::mt19937 sense_rng(static_cast<unsigned>(seed) + 7777u);
+  std::mt19937 gap_rng(static_cast<unsigned>(seed) + 9091u);   // --people-gap 専用(rng・sense_rng を消費しない)
+  long gap_left = 0;                                            // 欠落の残り周期数
   Scenario sc = makeScenario(scenario, rng);
   const bool sfm2 = o.ped_model == "sfm2";
   const bool ttc = o.ped_model == "ttc";
@@ -344,6 +373,7 @@ RunMetrics runOne(const Options& o, const std::string& scenario, int seed, std::
   cp.w_turn = o.w_turn;
   cp.w_heading = o.w_heading;
   cp.accel_rollout = o.accel_rollout;
+  cp.accel_clear_time = o.accel_clear_time;
   cp.door_yield = o.door_yield;
   cp.social.prox.sigma = o.prox_sigma;
   cp.social.prox.rear_ratio = o.rear_ratio;
@@ -384,6 +414,14 @@ RunMetrics runOne(const Options& o, const std::string& scenario, int seed, std::
   for (long k = 0; k < n_cycles && !reached; ++k) {
     const double t = static_cast<double>(k) * kControlDt;
     const std::vector<Agent> truth = toAgents(peds);
+    bool in_gap = false;   // --people-gap: この周期は人の入力が欠落している(検出・people.agents・安全層のすべてから人を除く)
+    if (o.gap_p > 0.0) {
+      if (gap_left <= 0) {
+        std::uniform_real_distribution<double> u(0.0, 1.0);
+        if (u(gap_rng) < o.gap_p) gap_left = std::max(1L, std::lround(o.gap_d / kControlDt));
+      }
+      if (gap_left > 0) { in_gap = true; --gap_left; }
+    }
 
     if (blind && blind->has_ped && blind->t_first_los < 0 && lineOfSight({pose.x, pose.y}, truth[0].pos, sc.walls)) {
       blind->t_first_los = t;
@@ -400,6 +438,7 @@ RunMetrics runOne(const Options& o, const std::string& scenario, int seed, std::
         if (unit(sense_rng) > 0.9) continue;                                   // 検出率
         Detection d;
         d.pos = {a.pos.x + noise(sense_rng), a.pos.y + noise(sense_rng)};
+        if (in_gap) continue;   // 欠落(雑音は引いた後。sense_rng の消費は注入なしと同じ)
         if (o.occlusion && !lineOfSight({pose.x, pose.y}, a.pos, sc.walls)) continue;   // 壁の裏は捨てる(雑音は引いた後。sense_rng の消費は off と同じ)
         d.cov = {0.05 * 0.05, 0.0, 0.05 * 0.05};
         d.radius = a.radius;
@@ -417,7 +456,7 @@ RunMetrics runOne(const Options& o, const std::string& scenario, int seed, std::
       }
     } else {
       for (const Agent& a : truth)
-        if (!o.occlusion || lineOfSight({pose.x, pose.y}, a.pos, sc.walls)) people.agents.push_back(a);
+        if (!in_gap && (!o.occlusion || lineOfSight({pose.x, pose.y}, a.pos, sc.walls))) people.agents.push_back(a);
       if (blind && blind->t_first_det < 0 && blind->t_first_los >= 0) blind->t_first_det = blind->t_first_los;
     }
     if (blind && !people.agents.empty() && blind->t_confirm < 0) blind->t_confirm = t;
@@ -435,10 +474,19 @@ RunMetrics runOne(const Options& o, const std::string& scenario, int seed, std::
     rec.recordBehavior(dec.behavior, kControlDt);
 
     const auto t0 = std::chrono::steady_clock::now();
-    const ControlResult res = controller.compute(pose, vel, path, people, obstacles, dec.speed_ratio, static_obstacles);
+    const ControlResult res = controller.compute(pose, vel, path, people, obstacles, dec.speed_ratio, static_obstacles, !(in_gap && o.gap_stale));
     const auto t1 = std::chrono::steady_clock::now();
     rec.recordControlTime(std::chrono::duration<double, std::milli>(t1 - t0).count());
     const Twist2D cmd = res.all_colliding ? Twist2D{} : res.cmd;
+    if (accel) {
+      if (in_gap) ++accel->gap_cycles;
+      if (res.accel_used) {
+        ++accel->accel_cycles;
+        if (in_gap) ++accel->gap_accel_cycles;
+        for (const Agent& a : truth)
+          if (std::hypot(a.pos.x - pose.x, a.pos.y - pose.y) <= 6.0 && lineOfSight({pose.x, pose.y}, a.pos, sc.walls)) { ++accel->false_accel_cycles; break; }
+      }
+    }
     if (wall) {
       if (distanceToWalls({pose.x, pose.y}, sc.walls) < kRobotRadius) ++wall->wall_cycles;
       if (res.all_colliding) ++wall->all_colliding_cycles;
@@ -454,6 +502,7 @@ RunMetrics runOne(const Options& o, const std::string& scenario, int seed, std::
       if (o.safety_mode == SafetyMode::Predictive) {
         const Pose2D next = model->integrate(pose, cmd, kPhysicsDt);
         for (const Pedestrian& p : peds) {
+          if (in_gap) break;   // 欠落中は安全層にも見えない
           if (o.occlusion && !visibleAny({pose.x, pose.y}, p.pos, p.radius, sc.walls)) continue;   // 壁の裏の人は安全層にも見えない
           const double c_now = fp->clearance(pose, p.pos) - p.radius;
           const double c_next = fp->clearance(next, {p.pos.x + p.vel.x * kPhysicsDt, p.pos.y + p.vel.y * kPhysicsDt}) - p.radius;
@@ -462,6 +511,7 @@ RunMetrics runOne(const Options& o, const std::string& scenario, int seed, std::
       } else if (o.safety_mode != SafetyMode::Off) {
         double min_clear = 1e9;
         for (const Pedestrian& p : peds) {
+          if (in_gap) break;
           if (o.occlusion && !visibleAny({pose.x, pose.y}, p.pos, p.radius, sc.walls)) continue;
           min_clear = std::min(min_clear, fp->clearance(pose, p.pos) - p.radius);
         }
@@ -533,7 +583,7 @@ RunMetrics runOne(const Options& o, const std::string& scenario, int seed, std::
   return rec.finish(reached, reach_time, straight);
 }
 
-struct Row { std::string scenario; int seed; RunMetrics m; std::vector<ContactEvent> contacts; WallStats wall; BlindStats blind; EventStats event; };
+struct Row { std::string scenario; int seed; RunMetrics m; std::vector<ContactEvent> contacts; WallStats wall; BlindStats blind; EventStats event; AccelStats accel; };
 
 void writeContactsCsv(const std::string& path, const std::vector<Row>& rows) {
   std::ofstream f(path);
@@ -633,15 +683,21 @@ int main(int argc, char** argv) {
     std::vector<Row> rows;
     for (const std::string& sn : scenarios)
       for (int seed = o.seed_start; seed < o.seed_start + o.seeds; ++seed) {
-        Row row{sn, seed, {}, {}, {}, {}, {}};
+        Row row{sn, seed, {}, {}, {}, {}, {}, {}};
         row.m = runOne(o, sn, seed, o.contacts_csv.empty() ? nullptr : &row.contacts, o.wall_csv.empty() ? nullptr : &row.wall,
-                       o.blind_csv.empty() ? nullptr : &row.blind, o.event_csv.empty() ? nullptr : &row.event);
+                       o.blind_csv.empty() ? nullptr : &row.blind, o.event_csv.empty() ? nullptr : &row.event, o.accel_csv.empty() ? nullptr : &row.accel);
         rows.push_back(std::move(row));
       }
 
     printTable(scenarios, rows);
     if (!o.csv.empty()) writeCsv(o.csv, rows);
     if (!o.contacts_csv.empty()) writeContactsCsv(o.contacts_csv, rows);
+    if (!o.accel_csv.empty()) {
+      std::ofstream f(o.accel_csv);
+      if (!f) throw std::runtime_error("cannot write " + o.accel_csv);
+      f << "scenario,seed,accel_cycles,false_accel_cycles,gap_cycles,gap_accel_cycles\n";
+      for (const Row& r : rows) f << r.scenario << ',' << r.seed << ',' << r.accel.accel_cycles << ',' << r.accel.false_accel_cycles << ',' << r.accel.gap_cycles << ',' << r.accel.gap_accel_cycles << '\n';
+    }
     if (!o.wall_csv.empty()) {
       std::ofstream f(o.wall_csv);
       if (!f) throw std::runtime_error("cannot write " + o.wall_csv);

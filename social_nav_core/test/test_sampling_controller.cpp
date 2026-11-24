@@ -832,4 +832,87 @@ TEST(door_yield_always_leaves_a_decelerating_candidate) {
     }
 }
 
+// accel_clear_time / people_valid: 帯の手前で停止中のロボットで、加速軌道が使われた周期を accel_used と vx で見る。
+// タイマは compute 1 回を p_.dt(0.1 s)と数え、その周期を含めて連続 accel_clear_time 秒以上なら可(3.0 s = 30 回目から)
+namespace {
+ControlResult guardStep(SamplingController& c, const TrackedPeople& people, bool valid) {
+  const ObstacleCostFn band = [](double x, double) { return (x > 1.8 && x < 2.2) ? 0.5 : 0.0; };
+  return c.compute({1.75, 0, 0}, {0, 0, 0}, straightPath(1.75, 6.0), people, band, 1.0, ObstacleCostFn{}, valid);
+}
+ControllerParams guardOn(double t) {
+  ControllerParams p;
+  p.accel_rollout = true;
+  p.accel_clear_time = t;
+  return p;
+}
+}  // namespace
+
+TEST(accel_clear_time_default_is_zero) {
+  EXPECT_NEAR(ControllerParams{}.accel_clear_time, 0.0, 0.0);
+}
+
+TEST(accel_clear_time_allows_accel_from_exactly_the_30th_cycle) {
+  SamplingController c(guardOn(3.0), diff(), circle());
+  for (int i = 1; i <= 29; ++i) {
+    const ControlResult r = guardStep(c, TrackedPeople{}, true);
+    EXPECT_TRUE(!r.accel_used);
+    EXPECT_TRUE(r.cmd.vx < 0.02);
+  }
+  const ControlResult r = guardStep(c, TrackedPeople{}, true);
+  EXPECT_TRUE(r.accel_used);
+  EXPECT_TRUE(r.cmd.vx > 0.09);
+}
+
+TEST(accel_clear_time_timer_resets_when_a_person_appears) {
+  SamplingController c(guardOn(3.0), diff(), circle());
+  for (int i = 0; i < 40; ++i) guardStep(c, TrackedPeople{}, true);
+  EXPECT_TRUE(guardStep(c, TrackedPeople{}, true).accel_used);
+  const ControlResult with_person = guardStep(c, staticPerson(1.75, 4.0), true);
+  EXPECT_TRUE(!with_person.accel_used);
+  for (int i = 1; i <= 29; ++i) EXPECT_TRUE(!guardStep(c, TrackedPeople{}, true).accel_used);
+  EXPECT_TRUE(guardStep(c, TrackedPeople{}, true).accel_used);
+}
+
+TEST(accel_clear_time_invalid_people_blocks_accel_and_resets_timer) {
+  SamplingController c(guardOn(3.0), diff(), circle());
+  SamplingController off(ControllerParams{}, diff(), circle());
+  for (int i = 0; i < 40; ++i) guardStep(c, TrackedPeople{}, true);
+  const ControlResult a = guardStep(c, TrackedPeople{}, false);
+  const ControlResult b = guardStep(off, TrackedPeople{}, true);
+  EXPECT_TRUE(!a.accel_used);
+  EXPECT_NEAR(a.cmd.vx, b.cmd.vx, 0.0);
+  EXPECT_NEAR(a.cmd.wz, b.cmd.wz, 0.0);
+  EXPECT_NEAR(a.best_cost, b.best_cost, 0.0);
+  for (int i = 1; i <= 29; ++i) EXPECT_TRUE(!guardStep(c, TrackedPeople{}, true).accel_used);
+  EXPECT_TRUE(guardStep(c, TrackedPeople{}, true).accel_used);
+}
+
+TEST(accel_clear_time_zero_is_identical_to_plain_on) {
+  // 0 では最初の周期から加速軌道を評価する。people_valid の既定引数は真と同じ
+  SamplingController c0(guardOn(0.0), diff(), circle());
+  SamplingController c_default(guardOn(0.0), diff(), circle());
+  const ObstacleCostFn band = [](double x, double) { return (x > 1.8 && x < 2.2) ? 0.5 : 0.0; };
+  const ControlResult a = guardStep(c0, TrackedPeople{}, true);
+  const ControlResult b = c_default.compute({1.75, 0, 0}, {0, 0, 0}, straightPath(1.75, 6.0), TrackedPeople{}, band);
+  EXPECT_TRUE(a.accel_used);
+  EXPECT_NEAR(a.cmd.vx, b.cmd.vx, 0.0);
+  EXPECT_NEAR(a.cmd.wz, b.cmd.wz, 0.0);
+  EXPECT_NEAR(a.best_cost, b.best_cost, 0.0);
+}
+
+TEST(accel_clear_time_is_ignored_when_accel_rollout_is_off) {
+  ControllerParams p;
+  p.accel_clear_time = 3.0;
+  SamplingController c(p, diff(), circle());
+  SamplingController ref(ControllerParams{}, diff(), circle());
+  for (int i = 0; i < 35; ++i) {
+    const ControlResult a = guardStep(c, TrackedPeople{}, i % 2 == 0);
+    const ControlResult b = guardStep(ref, TrackedPeople{}, true);
+    EXPECT_TRUE(!a.accel_used);
+    EXPECT_NEAR(a.cmd.vx, b.cmd.vx, 0.0);
+    EXPECT_NEAR(a.cmd.wz, b.cmd.wz, 0.0);
+    EXPECT_NEAR(a.best_cost, b.best_cost, 0.0);
+  }
+}
+
 MINI_TEST_MAIN()

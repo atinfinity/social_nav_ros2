@@ -73,7 +73,7 @@ SamplingController::SamplingController(ControllerParams p, std::shared_ptr<const
 ControlResult SamplingController::compute(const Pose2D& pose, const Twist2D& vel,
                                           const std::vector<Pose2D>& path, const TrackedPeople& people,
                                           const ObstacleCostFn& obstacles, double speed_limit_ratio,
-                                          const ObstacleCostFn& static_obstacles) {
+                                          const ObstacleCostFn& static_obstacles, bool people_valid) {
   ControlResult result;
   Vec2 narrow_pt{0, 0}, tangent_r{1, 0};
   const double ratio = std::min(1.0, std::max(0.0, speed_limit_ratio));
@@ -135,6 +135,11 @@ ControlResult SamplingController::compute(const Pose2D& pose, const Twist2D& vel
 
   social_.prepare(people, {pose.x, pose.y}, dt, dt, n_steps);
   const bool use_social = p_.w_social != 0.0 && !social_.empty();
+  bool accel_ok = false;
+  if (p_.accel_rollout) {
+    if (people_valid && social_.empty()) accel_clear_ += dt; else accel_clear_ = 0.0;
+    accel_ok = people_valid && social_.empty() && accel_clear_ >= p_.accel_clear_time - 1e-9;
+  }
 
   const std::vector<Pose2D>& ref_path = shifted.empty() ? path : shifted;
   const bool has_path = !path.empty();
@@ -162,6 +167,7 @@ ControlResult SamplingController::compute(const Pose2D& pose, const Twist2D& vel
   Twist2D best_cmd;
   bool found = false;
   bool best_contact = false;
+  bool best_accel = false;
   const bool do_diag = diag_ && use_social;
   if (do_diag) {
     result.diag.valid = true;
@@ -272,12 +278,16 @@ ControlResult SamplingController::compute(const Pose2D& pose, const Twist2D& vel
     double cost = traj_cost(q, obs_max);
     // accel_rollout: 6 m 以内(SocialCostParams.max_range)に追跡中の人がいない周期だけ、各 wz で vx 最大の候補を
     // 加速し続ける軌道でも評価し、低い方を採る(指令は c のまま)
-    if (p_.accel_rollout && social_.empty() && c.vx >= max_vx_for_wz(c.wz)) {
+    bool cand_accel = false;
+    if (accel_ok && c.vx >= max_vx_for_wz(c.wz)) {
       Pose2D qa;
       bool col_a;
       double om_a;
       rollout(c, qa, col_a, om_a, true);
-      if (!col_a) cost = std::min(cost, traj_cost(qa, om_a));
+      if (!col_a) {
+        const double ca = traj_cost(qa, om_a);
+        if (ca < cost) { cost = ca; cand_accel = true; }
+      }
     }
     double heading_err = 0.0;
     if (have_tangent) heading_err = std::fabs(std::remainder(tangent - q.theta, 2.0 * M_PI));
@@ -291,6 +301,7 @@ ControlResult SamplingController::compute(const Pose2D& pose, const Twist2D& vel
       best_err = heading_err;
       best_cmd = c;
       best_contact = contact;
+      best_accel = cand_accel;
       found = true;
     }
   }
@@ -300,6 +311,7 @@ ControlResult SamplingController::compute(const Pose2D& pose, const Twist2D& vel
     return result;   // cmd は零指令、best_cost は 0
   }
   if (do_diag) result.diag.chosen_contact = best_contact ? 1 : 0;
+  result.accel_used = best_accel;
   result.cmd = best_cmd;
   result.best_cost = best;
   return result;

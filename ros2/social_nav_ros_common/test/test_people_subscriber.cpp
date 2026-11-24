@@ -39,6 +39,7 @@ TEST(PeopleSubscriber, EmptyBeforeReceive)
   auto node = std::make_shared<rclcpp::Node>("people_sub_test");
   PeopleSubscriber sub(node, "people", 0.5, 0.3);
   EXPECT_TRUE(sub.get().agents.empty());
+  EXPECT_FALSE(sub.valid(10.0));
 }
 
 TEST(PeopleSubscriber, ReturnsThenStale)
@@ -48,6 +49,19 @@ TEST(PeopleSubscriber, ReturnsThenStale)
   sub.update(toMsg(make(10.0, 0.9)));
   EXPECT_EQ(sub.get(10.2).agents.size(), 1u);
   EXPECT_TRUE(sub.get(11.0).agents.empty());
+}
+
+TEST(PeopleSubscriber, ValidOnlyWhenReceivedAndFresh)
+{
+  auto node = std::make_shared<rclcpp::Node>("people_sub_test3");
+  PeopleSubscriber sub(node, "people", 0.5, 0.3);
+  EXPECT_FALSE(sub.valid(10.2));
+  social_nav::TrackedPeople empty;
+  empty.stamp = 10.0;
+  sub.update(toMsg(empty));  // 人 0 人でも受信済み・鮮度内なら真
+  EXPECT_TRUE(sub.valid(10.2));
+  EXPECT_FALSE(sub.valid(10.6));
+  EXPECT_TRUE(sub.get(10.6).agents.empty());
 }
 
 int main(int argc, char ** argv)

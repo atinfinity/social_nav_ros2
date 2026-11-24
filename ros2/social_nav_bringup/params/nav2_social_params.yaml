@@ -205,6 +205,11 @@ controller_server:
       stuck_timeout: 2.0
       v_max: 0.8
       w_max: 1.9
+      # accel_rollout(既定 false、実機では有効にしない): true にするなら accel_clear_time > 0 が必要
+      # (0 以下だと警告して false に戻す)。people_valid かつ人なしが accel_clear_time 秒続いた後だけ加速軌道を評価する。
+      # 前提の 1 つを満たしただけで、開口部で人と出会う課題は残る。timer は 1 呼び出し = dt なので
+      # controller_frequency = 1/dt のときだけ秒数が合う(合わなければ警告)
+      accel_clear_time: 0.0
 
 local_costmap:
   local_costmap:

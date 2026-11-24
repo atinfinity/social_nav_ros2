@@ -62,3 +62,25 @@ TEST(SpeedLimitRatio, Conversions)
   EXPECT_DOUBLE_EQ(speedLimitRatio(0.4, false, 0.8), 0.5);
   EXPECT_DOUBLE_EQ(speedLimitRatio(2.0, false, 0.8), 1.0);
 }
+
+TEST(AccelGuard, DisablesWithoutClearTime)
+{
+  bool disabled = false;
+  EXPECT_FALSE(resolveAccelRollout(true, 0.0, disabled));
+  EXPECT_TRUE(disabled);
+  EXPECT_FALSE(resolveAccelRollout(true, -1.0, disabled));
+  EXPECT_TRUE(disabled);
+  EXPECT_TRUE(resolveAccelRollout(true, 3.0, disabled));
+  EXPECT_FALSE(disabled);
+  EXPECT_FALSE(resolveAccelRollout(false, 0.0, disabled));  // off は参照しない
+  EXPECT_FALSE(disabled);
+  EXPECT_FALSE(resolveAccelRollout(false, 3.0, disabled));
+  EXPECT_FALSE(disabled);
+}
+
+TEST(AccelGuard, PeriodMismatch)
+{
+  EXPECT_FALSE(accelPeriodMismatch(10.0, 0.1));
+  EXPECT_TRUE(accelPeriodMismatch(20.0, 0.1));
+  EXPECT_TRUE(accelPeriodMismatch(0.0, 0.1));
+}

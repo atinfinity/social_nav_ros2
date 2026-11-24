@@ -86,9 +86,27 @@ void SocialController::configure(
   p.social.step_subsample = i("step_subsample", p.social.step_subsample);
   p.social.max_range = d("max_range", p.social.max_range);
   p.social.min_confidence = d("min_confidence", p.social.min_confidence);
-  // accel_rollout(既定 false): 人が 6 m 以内にいない周期だけ加速継続の軌道も評価する。人の情報の欠落
-  // (未受信、鮮度切れ、TF 失敗、低信頼度)も「人なし」と扱うので、実機で有効にしない(sim の検証用)
+  // accel_rollout(既定 false): people_valid かつ人なしが accel_clear_time 秒続いた周期だけ、加速継続の軌道も評価する。
+  // 入力の欠落(未受信、鮮度切れ、TF 失敗)は people_valid 偽として渡す。実機で有効にする前提の 1 つを満たしただけで、
+  // 一度も見えていない人(壁の裏、視野外)や accel_clear_time を超える無言の欠落は区別できず、開口部で人と出会う課題が残る
+  // ので、実機では有効にしない
   p.accel_rollout = readParam<Ptr, bool>(node, name + ".accel_rollout", p.accel_rollout);
+  p.accel_clear_time = d("accel_clear_time", p.accel_clear_time);
+  {
+    bool disabled = false;
+    p.accel_rollout = social_nav_controller::resolveAccelRollout(p.accel_rollout, p.accel_clear_time, disabled);
+    if (disabled) {
+      RCLCPP_WARN(logger_, "accel_rollout requires accel_clear_time > 0 (got %.3f); accel_rollout disabled",
+                  p.accel_clear_time);
+    }
+  }
+  if (p.accel_rollout) {
+    const double freq = readParam<Ptr, double>(node, "controller_frequency", 20.0);
+    if (social_nav_controller::accelPeriodMismatch(freq, p.dt)) {
+      RCLCPP_WARN(logger_, "controller period (1/%.3f Hz) differs from dt=%.3f: accel_clear_time counts dt per call",
+                  freq, p.dt);
+    }
+  }
   v_max_ = p.limits.v_max;
 
   controller_ = std::make_unique<social_nav::SamplingController>(p, model, footprint);
@@ -162,6 +180,7 @@ geometry_msgs::msg::TwistStamped SocialController::computeVelocityCommands(
 
   // 3. people(鮮度切れは空)。フレームが違えば global_frame へ
   auto people = people_->get();
+  bool people_valid = people_->valid();  // 未受信・鮮度切れで偽
   if (!people.agents.empty() && !people.frame_id.empty() && people.frame_id != global_frame) {
     try {
       const auto t = tf_->lookupTransform(global_frame, people.frame_id, tf2::TimePointZero);
@@ -170,13 +189,16 @@ geometry_msgs::msg::TwistStamped SocialController::computeVelocityCommands(
     } catch (const std::exception & e) {
       RCLCPP_WARN_THROTTLE(logger_, *clock_, 2000, "people transform failed, ignoring people: %s", e.what());
       people.agents.clear();
+      people_valid = false;
     }
   }
 
   // 2, 3. 障害物コスト(local costmap)とコア呼び出し
   const auto obstacles = makeObstacleCostFn(*costmap_ros_->getCostmap());
   const social_nav::Twist2D vel{velocity.linear.x, velocity.linear.y, velocity.angular.z};
-  const auto result = controller_->compute(robot, vel, path, people, obstacles, speed_limit_ratio);
+  const auto result = controller_->compute(robot, vel, path, people, obstacles, speed_limit_ratio,
+                                      social_nav::ObstacleCostFn{},
+                                      people_valid);
 
   // 4. 全候補衝突が stuck_timeout 続いたら例外
   const auto now = clock_->now();
