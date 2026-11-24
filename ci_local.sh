@@ -58,7 +58,18 @@ elif [[ -f "$SMOKE" ]]; then
   set +u
   source /ws/install/setup.bash
   set -u
-  TIMEOUT=120 bash "$SMOKE"
+  # (a) 既定: door_yield の購読なし(controller_server は /map を購読しない)、地図受信のログなし
+  TIMEOUT=120 ABSENT_LOG="door_yield: map received" EXPECT_CTRL_MAP_SUB=0 bash "$SMOKE"
+  # (b) door_yield: true(SocialDWA。両 plugin とも常に configure される)で /map を購読し、地図受信のログがちょうど 1 回
+  PARAMS_B=$(mktemp --suffix=.yaml)
+  python3 - "$PARAMS_B" <<'PY'
+import sys, yaml
+src = "/ws/install/social_nav_bringup/share/social_nav_bringup/params/nav2_social_params.yaml"
+doc = yaml.safe_load(open(src))
+doc["controller_server"]["ros__parameters"]["SocialDWA"]["door_yield"] = True
+yaml.safe_dump(doc, open(sys.argv[1], "w"))
+PY
+  TIMEOUT=120 LAUNCH_ARGS="params_file:=$PARAMS_B" EXPECT_LOG="door_yield: map received" EXPECT_CTRL_MAP_SUB=1 bash "$SMOKE"
 else
   echo "skip (smoke_launch.sh not installed)"
 fi

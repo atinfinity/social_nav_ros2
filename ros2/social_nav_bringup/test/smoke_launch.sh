@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # ヘッダレスのスモーク起動。静的 TF(map->odom->base_link)だけで全 lifecycle ノードが active になるか判定する。
 # 使い方: source install/setup.bash && smoke_launch.sh   環境変数: TIMEOUT(秒, 既定 60), LAUNCH_ARGS
-# 終了コード: 0 = 全ノード active かつログに致命的エラーなし / 1 = active に届かない / 2 = ログにロードエラー
+# 追加の検査(任意): EXPECT_LOG(正規表現)= ログにちょうど 1 回出る、ABSENT_LOG = 出ない、EXPECT_CTRL_MAP_SUB(1/0)= controller_server が /map を購読している/いない
+# 終了コード: 0 = 全ノード active かつログに致命的エラーなし / 1 = active に届かない / 2 = ログにロードエラー / 3 = 追加の検査に失敗
 set -u
 TIMEOUT="${TIMEOUT:-60}"
 LOG_DIR="$(mktemp -d)"
@@ -53,6 +54,30 @@ if [ "$all_active" -ne 1 ]; then
   echo "NOT all nodes active within ${TIMEOUT}s; not active: ${not_active[*]:-}"
   echo "--- log tail ($LOG) ---"; tail -n 60 "$LOG"
   exit 1
+fi
+if [ -n "${EXPECT_LOG:-}" ]; then
+  n=0
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    n=$(grep -cE "$EXPECT_LOG" "$LOG"); [ "$n" -ge 1 ] && break; sleep 1
+  done
+  if [ "$n" -ne 1 ]; then echo "EXPECT_LOG '$EXPECT_LOG' matched $n times (want 1)"; exit 3; fi
+  echo "log ok: '$EXPECT_LOG' x1"
+fi
+if [ -n "${ABSENT_LOG:-}" ] && grep -qE "$ABSENT_LOG" "$LOG"; then
+  echo "ABSENT_LOG '$ABSENT_LOG' found in log"; exit 3
+fi
+if [ -n "${EXPECT_CTRL_MAP_SUB:-}" ]; then
+  # /map の購読者(ros2 topic info -v の Subscription 以降)。発見の遅れで欠けることがあるので、既知の購読者
+  # (global_costmap, people_tracker_node)が見えるまで待ってから controller_server の有無を見る
+  for _ in 1 2 3 4 5 6 7 8; do
+    subs="$(timeout 10 ros2 topic info -v /map 2>/dev/null | awk '/^Subscription count/{f=1} f && /^Node name:/{print $3}' | sort | tr '\n' ' ')"
+    case "$subs" in *global_costmap*people_tracker_node*) break ;; esac
+    sleep 2
+  done
+  echo "/map subscribers: $subs"
+  case "$subs" in *global_costmap*people_tracker_node*) ;; *) echo "known /map subscribers not seen"; exit 3 ;; esac
+  has=0; case "$subs" in *controller_server*) has=1 ;; esac
+  if [ "$has" != "$EXPECT_CTRL_MAP_SUB" ]; then echo "controller_server /map subscription: got $has, want $EXPECT_CTRL_MAP_SUB"; exit 3; fi
 fi
 echo "SMOKE OK: all nodes active (log: $LOG)"
 exit 0

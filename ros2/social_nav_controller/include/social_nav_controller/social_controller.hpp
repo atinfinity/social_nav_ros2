@@ -1,15 +1,18 @@
 #pragma once
 #include <atomic>
 #include <memory>
+#include <mutex>
 #include <string>
 
 #include "geometry_msgs/msg/pose_stamped.hpp"
 #include "geometry_msgs/msg/twist.hpp"
 #include "geometry_msgs/msg/twist_stamped.hpp"
 #include "nav2_core/controller.hpp"
+#include "nav_msgs/msg/occupancy_grid.hpp"
 #include "nav_msgs/msg/path.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "social_nav_controller/controller_compat.hpp"
+#include "social_nav_controller/controller_utils.hpp"
 #include "social_nav_core/sampling_controller.hpp"
 #include "social_nav_ros_common/people_subscriber.hpp"
 
@@ -51,6 +54,14 @@ private:
   std::atomic<double> speed_limit_ratio_{1.0};  // setSpeedLimit(別スレッド)と compute から参照
   bool colliding_{false};
   rclcpp::Time colliding_since_{0, 0, RCL_ROS_TIME};
+
+  // door_yield(既定 false)。false のときは購読も TF 参照も作らず、compute の static_obstacles は空のまま
+  bool door_yield_{false};
+  int door_occupied_thresh_{65};
+  rclcpp::Subscription<nav_msgs::msg::OccupancyGrid>::SharedPtr door_map_sub_;
+  std::mutex door_map_mutex_;
+  std::shared_ptr<const DistanceField> door_field_;  // door_map_mutex_ で守る
+  std::string door_map_frame_;                       // 同上
 };
 
 }  // namespace social_nav_controller

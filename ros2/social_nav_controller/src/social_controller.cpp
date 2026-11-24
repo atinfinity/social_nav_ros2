@@ -107,6 +107,35 @@ void SocialController::configure(
                   freq, p.dt);
     }
   }
+  // door_yield(既定 false): 狭所点の判定に使う静的障害物コストを、地図(door_map_topic)の距離場から sim と同じ式で作る。
+  // sim の証拠は accel_rollout と door_yield の両方 on の組だけ。地図に載らない開口部は検出できない等の前提が残るので、
+  // 実機では有効にしない(docs/sim_results.md の door_yield の節)。door_* の閾値は core の既定のまま
+  p.door_yield = readParam<Ptr, bool>(node, name + ".door_yield", p.door_yield);
+  door_yield_ = p.door_yield;
+  if (door_yield_) {
+    const std::string map_topic = readParam<Ptr, std::string>(node, name + ".door_map_topic", "map");
+    door_occupied_thresh_ = i("door_occupied_thresh", door_occupied_thresh_);
+    const double freq = readParam<Ptr, double>(node, "controller_frequency", 20.0);
+    if (social_nav_controller::accelPeriodMismatch(freq, p.dt)) {
+      RCLCPP_WARN(logger_, "controller period (1/%.3f Hz) differs from dt=%.3f: door_hold_max and door_cooldown count dt per call",
+                  freq, p.dt);
+    }
+    if (!p.accel_rollout) {
+      RCLCPP_WARN(logger_, "door_yield is on but accel_rollout is off: the sim evidence is only for both on");
+    }
+    door_map_sub_ = node->create_subscription<nav_msgs::msg::OccupancyGrid>(
+      map_topic, rclcpp::QoS(1).transient_local().reliable(),
+      [this](const nav_msgs::msg::OccupancyGrid::ConstSharedPtr msg) {
+        auto field = buildDistanceField(*msg, door_occupied_thresh_);
+        {
+          std::lock_guard<std::mutex> lk(door_map_mutex_);
+          door_field_ = field;
+          door_map_frame_ = msg->header.frame_id;
+        }
+        RCLCPP_INFO(logger_, "door_yield: map received (%ux%u, %.3f m/cell, frame %s)", msg->info.width,
+                    msg->info.height, msg->info.resolution, msg->header.frame_id.c_str());
+      });
+  }
   v_max_ = p.limits.v_max;
 
   controller_ = std::make_unique<social_nav::SamplingController>(p, model, footprint);
@@ -117,6 +146,11 @@ void SocialController::configure(
 
 void SocialController::cleanup()
 {
+  door_map_sub_.reset();
+  {
+    std::lock_guard<std::mutex> lk(door_map_mutex_);
+    door_field_.reset();
+  }
   people_.reset();
   controller_.reset();
   plan_ = nav_msgs::msg::Path();
@@ -196,9 +230,33 @@ geometry_msgs::msg::TwistStamped SocialController::computeVelocityCommands(
   // 2, 3. 障害物コスト(local costmap)とコア呼び出し
   const auto obstacles = makeObstacleCostFn(*costmap_ros_->getCostmap());
   const social_nav::Twist2D vel{velocity.linear.x, velocity.linear.y, velocity.angular.z};
+  // door_yield off: 空のまま(従来と同じ引数)。on: 地図未受信・TF 失敗でも空にせず常に 0 を返す関数を渡す
+  // (空だと core が人を含む obstacles に戻る)
+  social_nav::ObstacleCostFn static_obstacles;
+  if (door_yield_) {
+    static_obstacles = makeZeroCostFn();
+    std::shared_ptr<const DistanceField> field;
+    std::string map_frame;
+    {
+      std::lock_guard<std::mutex> lk(door_map_mutex_);
+      field = door_field_;
+      map_frame = door_map_frame_;
+    }
+    if (!field) {
+      RCLCPP_WARN_THROTTLE(logger_, *clock_, 5000, "door_yield: map not received yet, no narrow point");
+    } else {
+      try {
+        // 経路・姿勢は global_frame(odom)、距離場は map。p_map = R p_odom + t
+        const auto t = tf_->lookupTransform(map_frame, global_frame, tf2::TimePointZero);
+        static_obstacles = makeStaticCostFn(field, t.transform.translation.x, t.transform.translation.y,
+                                            yawOf(t.transform.rotation));
+      } catch (const std::exception & e) {
+        RCLCPP_WARN_THROTTLE(logger_, *clock_, 2000, "door_yield: map transform failed, no narrow point: %s", e.what());
+      }
+    }
+  }
   const auto result = controller_->compute(robot, vel, path, people, obstacles, speed_limit_ratio,
-                                      social_nav::ObstacleCostFn{},
-                                      people_valid);
+                                      static_obstacles, people_valid);
 
   // 4. 全候補衝突が stuck_timeout 続いたら例外
   const auto now = clock_->now();
